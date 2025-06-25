@@ -2,12 +2,12 @@
 
 Identification of NL-LFR (Nonlinear Linear Fractional Representation) state-space models from input-output data using inference and learning.
 
+## Citation
+
 This repository contains the code accompanying the paper:
 
 **"Inference and Learning of Nonlinear LFR State-Space Models"**  
 Published in the *IEEE Control Systems Letters*, 2025 ([arXiv link](https://arxiv.org/abs/2503.14409))
-
-## Citation
 
 If you use this code in your work, please cite it as:
 
