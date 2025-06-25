@@ -9,7 +9,7 @@ Published in the *IEEE Control Systems Letters*, 2025 ([arXiv link](https://arxi
 
 ## Citation
 
-If you use this code in your work, please cite the following paper:
+If you use this code in your work, please cite it as:
 
 ```bibtex
 @article{floren2025inference,
