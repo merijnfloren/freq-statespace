@@ -9,6 +9,8 @@ Published in the *IEEE Control Systems Letters*, 2025 ([arXiv link](https://arxi
 
 ## Citation
 
+If you use this code in your work, please cite the following paper:
+
 ```bibtex
 @article{floren2025inference,
   title={Inference and Learning of Nonlinear LFR State-Space Models},
