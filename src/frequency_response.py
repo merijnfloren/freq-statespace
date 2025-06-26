@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src.training_data import InputOutputData, Normalizer
+from src.data_manager import InputOutputData, Normalizer
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,7 @@ class FrequencyResponse:
     G: np.ndarray  # FRM, shape (F, ny, nu, M, P)
     f: np.ndarray  # full frequency vector, shape (N//2 + 1,)
     f_idx: np.ndarray  # indices of excited frequencies, shape (F,)
+    fs: float  # sampling frequency in Hz
     norm: Normalizer  # normalization statistics
 
 
@@ -23,10 +24,7 @@ def compute_frequency_response(data: InputOutputData) -> FrequencyResponse:
 
     Parameters
     ----------
-    U : np.ndarray, shape (F, nu, R, P)
-        Input data (frequency, inputs, realizations, periods).
-    Y : np.ndarray, shape (F, ny, R, P)
-        Output data (frequency, outputs, realizations, periods).
+    data : InputOutputData
 
     Returns
     -------
@@ -77,5 +75,6 @@ def compute_frequency_response(data: InputOutputData) -> FrequencyResponse:
         G=G,
         f=data.freq.f,
         f_idx=data.freq.f_idx,
+        fs=data.freq.fs,
         norm=data.norm
     )

@@ -45,8 +45,8 @@ class InputOutputData:
 def create_data_object(
     u: np.ndarray,
     y: np.ndarray,
-    fs: float,
-    f_idx: np.ndarray
+    f_idx: np.ndarray,
+    fs: float
 ) -> InputOutputData:
     """
     Create InputOutputData from time domain signals.
@@ -54,18 +54,24 @@ def create_data_object(
     Parameters
     ----------
     u : np.ndarray, shape (N, nu, R, P)
-        Input time series
+        Input time series, must have 4 dimensions:
+        - N: number of time samples;
+        - nu: number of inputs;
+        - R: number of realizations;
+        - P: number of periods.
     y : np.ndarray, shape (N, ny, R, P)
-        Output time series
+        Output time series. Similar structure as `u`, with ny as number of
+        outputs.
+    f_idx : np.ndarray, shape (F,)
+        Indices of excited frequencies, where F is smaller than or equal to
+        N//2 + 1.
     fs : float
-        Sampling frequency
-    f_idx : np.ndarray
-        Excited frequency indices
+        Sampling frequency in Hz.
 
     Returns
     -------
     InputOutputData
-        Processed data with time and frequency domain representations
+        Processed (meta)data in time and frequency domains.
     """
     # Validate dimensions
     if u.ndim != 4:

@@ -5,6 +5,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from src.data_manager import Normalizer
+
 
 class ModelBLA(eqx.Module):
     A: jnp.ndarray = eqx.field(converter=jnp.asarray)

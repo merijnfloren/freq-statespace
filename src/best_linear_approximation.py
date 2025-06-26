@@ -1,12 +1,18 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 
+import equinox as eqx
+import jax
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
+import optimistix as optx
 
+from dep import fsid
 from src.frequency_response import compute_frequency_response
-from src.training_data import InputOutputData, Normalizer
+from src.data_manager import InputOutputData, Normalizer
 from src._model_structures import ModelBLA
+from src._solve import solve
 
 
 @dataclass(frozen=True)
@@ -15,6 +21,7 @@ class NonparametricBLA:
     G: np.ndarray  # BLA, shape (F, ny, nu)
     f: np.ndarray  # full frequency vector, shape (N//2 + 1,)
     f_idx: np.ndarray  # indices of excited frequencies, shape (F,)
+    fs: float  # sampling frequency in Hz
     norm: Normalizer  # normalization statistics
     var_noise: Optional[np.ndarray]  # noise variance, shape (F, ny, nu)
     var_tot: Optional[np.ndarray]  # total variance, shape (F, ny, nu)
@@ -30,9 +37,7 @@ def compute_nonparametric(data: InputOutputData) -> NonparametricBLA:
 
     Parameters
     ----------
-    G : np.ndarray, shape (F, ny, nu, M, P)
-        Frequency response matrix over frequencies, outputs, inputs,
-        realizations, and periods.
+    data : InputOutputData
 
     Returns
     -------
@@ -65,31 +70,126 @@ def compute_nonparametric(data: InputOutputData) -> NonparametricBLA:
         G=G_bla,
         f=freq_resp.f,
         f_idx=freq_resp.f_idx,
+        fs=freq_resp.fs,
         norm=freq_resp.norm,
         var_noise=var_noise,
         var_tot=var_tot
     )
 
 
-def parametrize_with_fsid(bla: NonparametricBLA, nx: int, q: int) -> ModelBLA:
-    """
-    Initialize with frequency-domain subspace identification.
+def freq_subspace_id(G_nonpar: NonparametricBLA, nx: int, q: int) -> ModelBLA:
 
-    Parameters
-    ----------
-    G_bla : np.ndarray, shape (F, ny, nu)
-        Best Linear Approximation
-    nx : int
-        System order
-    q : int
-        Past/future horizon
+    f_data = G_nonpar.f[G_nonpar.f_idx]
+    fs = G_nonpar.fs
+    ts = 1 / fs
+    z = 2 * np.pi * f_data / fs
 
-    Returns
-    -------
-    np.ndarray
-        Initial parameter estimates
-    """
-    pass
+    F, ny, nu = G_nonpar.G.shape
+
+    # Convert BLA to input-output form for FSID algorithm compatibility
+    Y = np.transpose(G_nonpar.G, (0, 2, 1)).reshape(nu * F, ny)
+    U = np.tile(np.eye(nu), (F, 1))
+    zj = np.repeat(np.exp(z * 1j), nu)
+
+    # Create weighting matrix (inverse of total variance)
+    if G_nonpar.var_tot is not None:
+        W_temp = 1 / np.sqrt(G_nonpar.var_tot)
+        W_temp = np.transpose(W_temp, (0, 2, 1)).reshape(nu * F, ny)
+        W = np.zeros((nu * F, ny, ny))
+        for k in range(nu * F):
+            np.fill_diagonal(W[k], W_temp[k])
+    else:
+        W = np.empty(0)
+
+    A, B_u, C_y, D_yu = fsid.gfdsid(
+        fddata=(zj, Y, U),
+        n=nx,
+        q=q,
+        estTrans=False,
+        w=W
+    )[:4]
+
+    return ModelBLA(
+        A=A,
+        B_u=B_u,
+        C_y=C_y,
+        D_yu=D_yu,
+        ts=ts
+    )
+
+
+def freq_iterative_optimization(
+    G_nonpar: NonparametricBLA,
+    G_par_init: ModelBLA,
+    solver: Union[optx.AbstractLeastSquaresSolver, optx.AbstractMinimiser],
+    max_iter: int
+) -> ModelBLA:
+
+    @dataclass(frozen=True)
+    class OptiArgs:
+        theta_static: ModelBLA  # static parameters of the model
+        G_nonpar: jnp.ndarray  # nonparametric BLA
+        f_data: jnp.ndarray  # frequencies at which BLA is evaluated
+        W: jnp.ndarray  # weighting matrix
+
+    # Create weighting matrix (inverse of total variance)
+    if G_nonpar.var_tot is not None:
+        W = 1 / jnp.sqrt(G_nonpar.var_tot)
+    else:
+        W = jnp.ones_like(G_nonpar.G)
+
+    f_data = G_nonpar.f[G_nonpar.f_idx]
+    G_par_init = _normalize_states(G_par_init, f_data)
+    theta0_dyn, theta_static = eqx.partition(G_par_init, eqx.is_inexact_array)
+
+    args = (theta_static, G_nonpar.G, f_data, W)
+
+    # Optimize the model parameters
+    print('Starting iterative optimization...')
+    theta_opti = solve(theta0_dyn, solver, args, _loss_fn, max_iter)[0]
+    print('\n')
+
+    G_par_opti = eqx.combine(theta_opti, theta_static)
+    return _normalize_states(G_par_opti, f_data)
+
+
+def _loss_fn(theta0_dyn: ModelBLA, args: tuple) -> tuple:
+
+    theta_static, G_nonpar, f_data, W = args
+
+    theta = eqx.combine(theta0_dyn, theta_static)
+
+    G_par = theta.frequency_response(f_data)
+    G_loss = jnp.sqrt(1 / G_nonpar.size) * W * (G_par - G_nonpar)
+    loss = (G_loss.real, G_loss.imag)
+
+    MSE_loss = 0.5 * jnp.sum(jnp.abs(G_loss)**2)
+    return loss, (MSE_loss,)
+
+
+def _normalize_states(model: ModelBLA, f_data: np.ndarray) -> ModelBLA:
+
+    nx, nu = model.B_u.shape
+
+    G_xu = ModelBLA(
+        A=model.A,
+        B_u=model.B_u,
+        C_y=np.eye(nx),
+        D_yu=np.zeros((nx, nu)),
+        ts=model.ts
+    ).frequency_response(f_data)
+
+    x_std = np.std(G_xu, axis=(0, 2))
+    Tx = np.diag(x_std)
+    Tx_inv = np.diag(1 / x_std)
+
+    return ModelBLA(
+        A=Tx_inv @ model.A @ Tx,
+        B_u=Tx_inv @ model.B_u,
+        C_y=model.C_y @ Tx,
+        D_yu=model.D_yu,
+        ts=model.ts
+    )
 
 
 def _plot(bla: NonparametricBLA) -> None:
