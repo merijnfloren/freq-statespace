@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from src.data_manager import Normalizer
+from src.nonlinear_functions import AbstractNonlinearFunction
 
 
 class ModelBLA(eqx.Module):
@@ -20,7 +20,7 @@ class ModelBLA(eqx.Module):
         u: np.ndarray,
         *,
         handicap: int = 0
-    ) -> jnp.ndarray:
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
 
         def _make_step(k, state):
             """
@@ -40,7 +40,7 @@ class ModelBLA(eqx.Module):
 
         # Validate handicap
         if not isinstance(handicap, int) or handicap < 0:
-            raise ValueError(f"'handicap' must be a non-negative integer, got {handicap}.")
+            raise ValueError(f"'handicap' must be a non-negative integer, got {handicap}.")  # noqa: E501
 
         # Extend input signal if needed
         if handicap > 0:
@@ -77,3 +77,70 @@ class ModelBLA(eqx.Module):
 
     def num_parameters(self) -> int:
         return self.A.size + self.B_u.size + self.C_y.size + self.D_yu.size
+
+
+class ModelNonlinearLFR(ModelBLA):
+    B_w: jnp.ndarray = eqx.field(converter=jnp.asarray)
+    C_z: jnp.ndarray = eqx.field(converter=jnp.asarray)
+    D_yw: jnp.ndarray = eqx.field(converter=jnp.asarray)
+    D_zu: jnp.ndarray = eqx.field(converter=jnp.asarray)
+    f_static: AbstractNonlinearFunction
+
+    def simulate(
+        self,
+        u: np.ndarray,
+        *,
+        handicap: int = 0
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+
+        def _make_step(k, state):
+            """
+            Simulate one step forward, parallelised over realisations.
+            """
+
+            X, Y_accum, X_accum, W_accum, Z_accum = state
+            U = jax.lax.dynamic_slice(
+                u, (k, 0, 0), (1, nu, R)
+            ).squeeze(axis=0)
+
+            # Model equations
+            Z = self.C_z @ X + self.D_zu @ U
+            W = self.f_static.evaluate(Z.T).T
+            X_next = self.A @ X + self.B_u @ U + self.B_w @ W
+            Y = self.C_y @ X + self.D_yu @ U + self.D_yw @ W
+            return (X_next,
+                    Y_accum.at[k, ...].set(Y),
+                    X_accum.at[k, ...].set(X),
+                    W_accum.at[k, ...].set(W),
+                    Z_accum.at[k, ...].set(Z))
+
+        u = jnp.asarray(u)
+
+        # Validate handicap
+        if not isinstance(handicap, int) or handicap < 0:
+            raise ValueError(f"'handicap' must be a non-negative integer, got {handicap}.")  # noqa: E501
+
+        # Extend input signal if needed
+        if handicap > 0:
+            u = jnp.concatenate((u[-handicap:, ...], u), axis=0)
+
+        N, nu, R = u.shape
+        nz, nx = self.C_z.shape
+        ny, nw = self.D_yw.shape
+
+        loop_init = (
+            jnp.zeros((nx, R)),  # initial state
+            jnp.zeros((N, ny, R)),  # Y_accum
+            jnp.zeros((N, nx, R)),  # X_accum
+            jnp.zeros((N, nw, R)),  # W_accum
+            jnp.zeros((N, nz, R)),  # Z_accum
+        )
+        Y, X, W, Z = jax.lax.fori_loop(0, N, _make_step, loop_init)[1:]
+        return (Y[handicap:, ...], X[handicap:, ...],
+                W[handicap:, ...], Z[handicap:, ...])
+
+    def num_parameters(self) -> int:
+        return (
+            self.B_w.size + self.C_z.size + self.D_yw.size + self.D_zu.size
+            + super().num_parameters() + self.f_static.num_parameters()
+        )

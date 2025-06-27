@@ -5,16 +5,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src.data_manager import InputOutputData, Normalizer
+from src.data_manager import FrequencyData, InputOutputData, Normalizer
 
 
 @dataclass(frozen=True)
 class FrequencyResponse:
     """Frequency response matrix and metadata."""
     G: np.ndarray  # FRM, shape (F, ny, nu, M, P)
-    f: np.ndarray  # full frequency vector, shape (N//2 + 1,)
-    f_idx: np.ndarray  # indices of excited frequencies, shape (F,)
-    fs: float  # sampling frequency in Hz
+    freq: FrequencyData  # normalized frequency-domain data
     norm: Normalizer  # normalization statistics
 
 
@@ -71,10 +69,4 @@ def compute_frequency_response(data: InputOutputData) -> FrequencyResponse:
                 U_inv = np.linalg.solve(U_block, np.eye(nu))
                 G[kf, :, :, kr, kp] = Y_block @ U_inv
 
-    return FrequencyResponse(
-        G=G,
-        f=data.freq.f,
-        f_idx=data.freq.f_idx,
-        fs=data.freq.fs,
-        norm=data.norm
-    )
+    return FrequencyResponse(G, data.freq, data.norm)

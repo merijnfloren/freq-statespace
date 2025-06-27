@@ -1,5 +1,6 @@
+from dataclasses import dataclass
 import time
-from typing import Any, Callable, cast, Union, TypeAlias, TypeVar
+from typing import Any, cast, Union
 
 import equinox as eqx
 import jax
@@ -12,39 +13,51 @@ from optimistix._least_squares import _ToMinimiseFn
 from optimistix._misc import OutAsArray
 
 
+@dataclass(frozen=True)
+class SolveResult:
+    """Result of the optimization process."""
+    theta: Y
+    aux: Any
+    loss_history: np.ndarray
+    iter_count: int
+    iter_times: np.ndarray
+    converged: bool
+    wall_time: float
+
+
 def solve(
     theta_init: Y,
     solver: Union[optx.AbstractLeastSquaresSolver, optx.AbstractMinimiser],
     args: PyTree[Any],
-    fn: Fn,
+    loss_fn: Fn,
     max_iter: int
-) -> tuple:
+) -> SolveResult:
 
-    fn = OutAsArray(fn)
+    loss_fn = OutAsArray(loss_fn)
     if isinstance(solver, optx.AbstractMinimiser):
-        fn = _ToMinimiseFn(fn)
-        fn = eqx.filter_closure_convert(fn, theta_init, args)
-        fn = cast(Fn[Y, Scalar, Aux], fn)
+        loss_fn = _ToMinimiseFn(loss_fn)
+        loss_fn = eqx.filter_closure_convert(loss_fn, theta_init, args)
+        loss_fn = cast(Fn[Y, Scalar, Aux], loss_fn)
     elif isinstance(solver, optx.AbstractLeastSquaresSolver):
-        fn = eqx.filter_closure_convert(fn, theta_init, args)
-        fn = cast(Fn[Y, Out, Aux], fn)
+        loss_fn = eqx.filter_closure_convert(loss_fn, theta_init, args)
+        loss_fn = cast(Fn[Y, Out, Aux], loss_fn)
     else:
         raise ValueError('Unknown solver type.')
 
     tags = frozenset()
-    f_struct, aux_struct = fn.out_struct
+    f_struct, aux_struct = loss_fn.out_struct
     options = {}
 
     # JIT compile step and terminate
     step = eqx.filter_jit(
-        eqx.Partial(solver.step, fn=fn, args=args, options=options, tags=tags)
+        eqx.Partial(solver.step, fn=loss_fn, args=args, options=options, tags=tags)  # noqa: E501
     )
     terminate = eqx.filter_jit(
-        eqx.Partial(solver.terminate, fn=fn, args=args, options=options, tags=tags)  # noqa: E501
+        eqx.Partial(solver.terminate, fn=loss_fn, args=args, options=options, tags=tags)  # noqa: E501
     )
 
     # Initial state
-    state = solver.init(fn, theta_init, args, options, f_struct, aux_struct, tags)  # noqa: E501
+    state = solver.init(loss_fn, theta_init, args, options, f_struct, aux_struct, tags)  # noqa: E501
     converged = terminate(y=theta_init, state=state)[0]
 
     iter_count = 0
@@ -77,5 +90,5 @@ def solve(
 
     wall_time = time.time() - start_time
 
-    return (theta, loss_history[:iter_count], iter_count,
-            iter_times[:iter_count], converged, wall_time)
+    return SolveResult(theta, aux, loss_history[:iter_count], iter_count,
+                       iter_times[:iter_count], converged, wall_time)

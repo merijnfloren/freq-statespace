@@ -7,7 +7,7 @@ import numpy as np
 
 
 @dataclass(frozen=True)
-class TimeDomain:
+class TimeData:
     """Normalized time-domain data container."""
     u: np.ndarray  # normalized inputs, shape (N, nu, R, P)
     y: np.ndarray  # normalized outputs, shape (N, ny, R, P)
@@ -16,7 +16,7 @@ class TimeDomain:
 
 
 @dataclass(frozen=True)
-class FrequencyDomain:
+class FrequencyData:
     """Normalized frequency-domain data container."""
     U: np.ndarray  # normalized input DFT, shape (F, nu, R, P)
     Y: np.ndarray  # normalized output DFT, shape (F, ny, R, P)
@@ -37,8 +37,8 @@ class Normalizer:
 @dataclass(frozen=True)
 class InputOutputData:
     """Combined time and frequency domain data."""
-    time: TimeDomain
-    freq: FrequencyDomain
+    time: TimeData
+    freq: FrequencyData
     norm: Normalizer
 
 
@@ -104,8 +104,8 @@ def create_data_object(
     f = np.arange(N//2 + 1) * fs / N
 
     return InputOutputData(
-        TimeDomain(u_norm, y_norm, t, ts),
-        FrequencyDomain(U, Y, f, f_idx, fs),
+        TimeData(u_norm, y_norm, t, ts),
+        FrequencyData(U, Y, f, f_idx, fs),
         Normalizer(u_mean.flatten(), u_std.flatten(),
                    y_mean.flatten(), y_std.flatten())
     )

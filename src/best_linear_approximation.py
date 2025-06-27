@@ -2,15 +2,14 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import optimistix as optx
 
 from dep import fsid
-from src.frequency_response import compute_frequency_response
-from src.data_manager import InputOutputData, Normalizer
+from src.frequency_response import compute_frequency_response, FrequencyResponse  # noqa: E501
+from src.data_manager import FrequencyData, InputOutputData
 from src._model_structures import ModelBLA
 from src._solve import solve
 
@@ -19,10 +18,7 @@ from src._solve import solve
 class NonparametricBLA:
     """Nonparametric Best Linear Approximation and metadeta."""
     G: np.ndarray  # BLA, shape (F, ny, nu)
-    f: np.ndarray  # full frequency vector, shape (N//2 + 1,)
-    f_idx: np.ndarray  # indices of excited frequencies, shape (F,)
-    fs: float  # sampling frequency in Hz
-    norm: Normalizer  # normalization statistics
+    freq_resp: FrequencyResponse  # FRM, shape (F, ny, nu, M, P), and metadata
     var_noise: Optional[np.ndarray]  # noise variance, shape (F, ny, nu)
     var_tot: Optional[np.ndarray]  # total variance, shape (F, ny, nu)
 
@@ -33,7 +29,7 @@ class NonparametricBLA:
 
 def compute_nonparametric(data: InputOutputData) -> NonparametricBLA:
     """
-    Compute BLA and variance estimates from frequency response data.
+    Compute BLA and variance estimates from y response data.
 
     Parameters
     ----------
@@ -66,21 +62,14 @@ def compute_nonparametric(data: InputOutputData) -> NonparametricBLA:
     else:
         var_tot = None
 
-    return NonparametricBLA(
-        G=G_bla,
-        f=freq_resp.f,
-        f_idx=freq_resp.f_idx,
-        fs=freq_resp.fs,
-        norm=freq_resp.norm,
-        var_noise=var_noise,
-        var_tot=var_tot
-    )
+    return NonparametricBLA(G_bla, freq_resp, var_noise, var_tot)
 
 
 def freq_subspace_id(G_nonpar: NonparametricBLA, nx: int, q: int) -> ModelBLA:
 
-    f_data = G_nonpar.f[G_nonpar.f_idx]
-    fs = G_nonpar.fs
+    freq = G_nonpar.freq_resp.freq
+    f_data = freq.f[freq.f_idx]
+    fs = freq.fs
     ts = 1 / fs
     z = 2 * np.pi * f_data / fs
 
@@ -93,22 +82,19 @@ def freq_subspace_id(G_nonpar: NonparametricBLA, nx: int, q: int) -> ModelBLA:
 
     # Create weighting matrix (inverse of total variance)
     if G_nonpar.var_tot is not None:
-        W_temp = 1 / np.sqrt(G_nonpar.var_tot)
-        W_temp = np.transpose(W_temp, (0, 2, 1)).reshape(nu * F, ny)
+        W_temp = 1 / G_nonpar.var_tot
+
+        # The steps below are to make it compatible with fsid.gfdsid
+        W_temp = np.transpose(np.sqrt(W_temp), (0, 2, 1)).reshape(nu * F, ny)
         W = np.zeros((nu * F, ny, ny))
         for k in range(nu * F):
             np.fill_diagonal(W[k], W_temp[k])
     else:
         W = np.empty(0)
 
-    A, B_u, C_y, D_yu = fsid.gfdsid(
-        fddata=(zj, Y, U),
-        n=nx,
-        q=q,
-        estTrans=False,
-        w=W
-    )[:4]
-
+    # Perform frequency subspace identification
+    A, B_u, C_y, D_yu = fsid.gfdsid(fddata=(zj, Y, U), n=nx,
+                                    q=q, estTrans=False, w=W)[:4]
     return ModelBLA(
         A=A,
         B_u=B_u,
@@ -125,32 +111,28 @@ def freq_iterative_optimization(
     max_iter: int
 ) -> ModelBLA:
 
-    @dataclass(frozen=True)
-    class OptiArgs:
-        theta_static: ModelBLA  # static parameters of the model
-        G_nonpar: jnp.ndarray  # nonparametric BLA
-        f_data: jnp.ndarray  # frequencies at which BLA is evaluated
-        W: jnp.ndarray  # weighting matrix
-
     # Create weighting matrix (inverse of total variance)
     if G_nonpar.var_tot is not None:
-        W = 1 / jnp.sqrt(G_nonpar.var_tot)
+        W = 1 / G_nonpar.var_tot
     else:
         W = jnp.ones_like(G_nonpar.G)
 
-    f_data = G_nonpar.f[G_nonpar.f_idx]
-    G_par_init = _normalize_states(G_par_init, f_data)
+    freq = G_nonpar.freq_resp.freq
+    f_data = freq.f[freq.f_idx]
+
+    G_par_init = _normalize_states(G_par_init, freq)
     theta0_dyn, theta_static = eqx.partition(G_par_init, eqx.is_inexact_array)
 
     args = (theta_static, G_nonpar.G, f_data, W)
 
     # Optimize the model parameters
     print('Starting iterative optimization...')
-    theta_opti = solve(theta0_dyn, solver, args, _loss_fn, max_iter)[0]
+    solve_result = solve(theta0_dyn, solver, args, _loss_fn, max_iter)
     print('\n')
 
+    theta_opti = solve_result.theta
     G_par_opti = eqx.combine(theta_opti, theta_static)
-    return _normalize_states(G_par_opti, f_data)
+    return _normalize_states(G_par_opti, freq)
 
 
 def _loss_fn(theta0_dyn: ModelBLA, args: tuple) -> tuple:
@@ -160,35 +142,47 @@ def _loss_fn(theta0_dyn: ModelBLA, args: tuple) -> tuple:
     theta = eqx.combine(theta0_dyn, theta_static)
 
     G_par = theta.frequency_response(f_data)
-    G_loss = jnp.sqrt(1 / G_nonpar.size) * W * (G_par - G_nonpar)
+    G_loss = jnp.sqrt(W / G_nonpar.size) * (G_par - G_nonpar)
     loss = (G_loss.real, G_loss.imag)
 
-    MSE_loss = 0.5 * jnp.sum(jnp.abs(G_loss)**2)
+    MSE_loss = jnp.sum(jnp.abs(G_loss)**2)
     return loss, (MSE_loss,)
 
 
-def _normalize_states(model: ModelBLA, f_data: np.ndarray) -> ModelBLA:
+def _normalize_states(model: ModelBLA, freq: FrequencyData) -> ModelBLA:
+    """
+    Normalize state variables by their standard deviation for better numerical
+    conditioning.
 
+    Args:
+        model: BLA model to normalize
+        f_data: Frequency data for computing state response
+
+    Returns:
+        Normalized model with transformation T_x applied to states
+    """
     nx, nu = model.B_u.shape
 
+    f_data = freq.f
+
     G_xu = ModelBLA(
-        A=model.A,
-        B_u=model.B_u,
-        C_y=np.eye(nx),
-        D_yu=np.zeros((nx, nu)),
+        A=model.A, B_u=model.B_u,  # usual state dynamics
+        C_y=np.eye(nx), D_yu=np.zeros((nx, nu)),  # full-state output
         ts=model.ts
     ).frequency_response(f_data)
 
-    x_std = np.std(G_xu, axis=(0, 2))
+    U_mean = freq.U.mean(axis=-1)
+    X = G_xu @ U_mean
+    x = np.fft.irfft(X, axis=0)
+    x_std = np.std(x, axis=(0, 2))
+
     Tx = np.diag(x_std)
     Tx_inv = np.diag(1 / x_std)
 
+    # Apply similarity transformation: x_norm = Tx_inv * x
     return ModelBLA(
-        A=Tx_inv @ model.A @ Tx,
-        B_u=Tx_inv @ model.B_u,
-        C_y=model.C_y @ Tx,
-        D_yu=model.D_yu,
-        ts=model.ts
+        A=Tx_inv @ model.A @ Tx, B_u=Tx_inv @ model.B_u,
+        C_y=model.C_y @ Tx, D_yu=model.D_yu, ts=model.ts
     )
 
 
@@ -207,8 +201,10 @@ def _plot(bla: NonparametricBLA) -> None:
         This function only produces a plot.
     """
     ny, nu = bla.G.shape[1:3]
+    freq = bla.freq_resp.freq
 
-    scale_matrix = bla.norm.y_std[:, None] / bla.norm.u_std[None, :]
+    scale_matrix = (bla.freq_resp.norm.y_std[:, None]
+                    / bla.freq_resp.norm.u_std[None, :])
     G = scale_matrix * bla.G
 
     # Calculate optimal figure size based on subplot grid
@@ -222,7 +218,7 @@ def _plot(bla: NonparametricBLA) -> None:
     elif ny == 1 or nu == 1:
         axes = axes.reshape(ny, nu)
 
-    f_data = bla.f[bla.f_idx]
+    f_data = freq.f[freq.f_idx]
 
     for i in range(ny):
         for j in range(nu):
