@@ -1,3 +1,11 @@
+"""
+General-purpose wrapper around Optimistix solvers for JAX-based optimization.
+
+This module provides a unified `solve` function that supports both least
+squares and general minimization problems using Optimistix solvers. It records
+iteration timing, convergence status, loss history, and auxiliary outputs.
+"""
+
 from dataclasses import dataclass
 import time
 from typing import Any, cast, Union
@@ -15,7 +23,26 @@ from optimistix._misc import OutAsArray
 
 @dataclass(frozen=True)
 class SolveResult:
-    """Result of the optimization process."""
+    """
+    Result of the optimization process.
+
+    Attributes
+    ----------
+    theta : Any
+        Final solution vector or PyTree of parameters.
+    aux : Any
+        Auxiliary output from the final loss evaluation.
+    loss_history : np.ndarray
+        Sequence of loss values at each iteration.
+    iter_count : int
+        Number of iterations executed before termination.
+    iter_times : np.ndarray
+        Wall-clock duration (in seconds) for each iteration.
+    converged : bool
+        Whether the termination criterion was met.
+    wall_time : float
+        Total wall-clock time (in seconds) spent in the optimization loop.
+    """
     theta: Y
     aux: Any
     loss_history: np.ndarray
@@ -32,6 +59,32 @@ def solve(
     loss_fn: Fn,
     max_iter: int
 ) -> SolveResult:
+    """
+    Solve an optimization problem using a JAX-compatible Optimistix solver.
+
+    Supports both least-squares and general minimization solvers. Tracks
+    iteration timing and loss history. Applies JIT compilation to improve
+    performance.
+
+    Parameters
+    ----------
+    theta_init : Any
+        Initial guess for the parameters to optimize (PyTree).
+    solver : AbstractLeastSquaresSolver or AbstractMinimiser
+        Solver instance from the Optimistix library.
+    args : PyTree[Any]
+        Additional static/dynamic arguments passed to the loss function.
+    loss_fn : Callable
+        Objective function to be minimized. Must return a tuple: (loss, aux).
+    max_iter : int
+        Maximum number of iterations allowed before termination.
+
+    Returns
+    -------
+    SolveResult
+        Structured result containing final parameters, loss trace, timing,
+        and convergence information.
+    """
 
     loss_fn = OutAsArray(loss_fn)
     if isinstance(solver, optx.AbstractMinimiser):

@@ -1,5 +1,5 @@
 """
-Frequency Response Analysis for Multi-Input Multi-Output Systems
+Frequency response analysis for multi-input multi-output systems.
 """
 from dataclasses import dataclass
 
@@ -10,10 +10,28 @@ from src.data_manager import FrequencyData, InputOutputData, Normalizer
 
 @dataclass(frozen=True)
 class FrequencyResponse:
-    """Frequency response matrix and metadata."""
-    G: np.ndarray  # FRM, shape (F, ny, nu, M, P)
-    freq: FrequencyData  # normalized frequency-domain data
-    norm: Normalizer  # normalization statistics
+    """
+    Frequency response matrix and metadata.
+
+    Attributes
+    ----------
+    G : np.ndarray
+        Frequency Response Matrix (FRM), with shape (F, ny, nu, M, P):
+        - F: number of frequency bins;
+        - ny: number of outputs;
+        - nu: number of inputs;
+        - M: number of realizations or experiments;
+        - P: number of periods.
+
+    freq : FrequencyData
+        Normalized frequency-domain data associated with the response.
+
+    norm : Normalizer
+        Normalization statistics used to scale the input/output signals.
+    """
+    G: np.ndarray
+    freq: FrequencyData
+    norm: Normalizer
 
 
 def compute_frequency_response(data: InputOutputData) -> FrequencyResponse:

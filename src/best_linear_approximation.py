@@ -1,3 +1,15 @@
+"""
+Frequency-domain system identification using nonparametric BLA and parametric
+subspace and optimization-based approaches.
+
+This module provides:
+- Estimation of nonparametric Best Linear Approximations (BLA) with variance
+  metrics.
+- Subspace-based frequency-domain identification.
+- Iterative refinement via nonlinear least-squares optimization.
+- Visualization tools for BLA magnitude and distortion levels.
+"""
+
 from dataclasses import dataclass
 from typing import Optional, Union
 
@@ -16,29 +28,49 @@ from src._solve import solve
 
 @dataclass(frozen=True)
 class NonparametricBLA:
-    """Nonparametric Best Linear Approximation and metadeta."""
-    G: np.ndarray  # BLA, shape (F, ny, nu)
-    freq_resp: FrequencyResponse  # FRM, shape (F, ny, nu, M, P), and metadata
-    var_noise: Optional[np.ndarray]  # noise variance, shape (F, ny, nu)
-    var_tot: Optional[np.ndarray]  # total variance, shape (F, ny, nu)
+    """
+    Nonparametric Best Linear Approximation (BLA) and associated metadata.
+
+    Attributes
+    ----------
+    G : np.ndarray
+        Nonparametric BLA estimate, shape (F, ny, nu).
+    freq_resp : FrequencyResponse
+        Raw frequency response matrix and metadata, shape (F, ny, nu, M, P).
+    var_noise : Optional[np.ndarray]
+        Estimated noise variance across realizations, shape (F, ny, nu).
+    var_tot : Optional[np.ndarray]
+        Estimated total variance across periods, shape (F, ny, nu).
+    """
+    G: np.ndarray
+    freq_resp: FrequencyResponse
+    var_noise: Optional[np.ndarray]
+    var_tot: Optional[np.ndarray]
 
     def plot(self) -> None:
-        """Plot BLA magnitude and distorion levels if available."""
+        """
+        Plot the BLA magnitude and distortion levels (if available).
+
+        Returns
+        -------
+        None
+        """
         return _plot(self)
 
 
 def compute_nonparametric(data: InputOutputData) -> NonparametricBLA:
     """
-    Compute BLA and variance estimates from y response data.
+    Compute nonparametric BLA and variance estimates from input-output data.
 
     Parameters
     ----------
     data : InputOutputData
+        Combined time- and frequency-domain data.
 
     Returns
     -------
     NonparametricBLA
-        BLA with noise and total variance estimates.
+        BLA result with noise and total variance estimates.
     """
 
     freq_resp = compute_frequency_response(data)
@@ -66,6 +98,23 @@ def compute_nonparametric(data: InputOutputData) -> NonparametricBLA:
 
 
 def freq_subspace_id(G_nonpar: NonparametricBLA, nx: int, q: int) -> ModelBLA:
+    """
+    Estimate a parametric state-space model using frequency-domain subspace ID.
+
+    Parameters
+    ----------
+    G_nonpar : NonparametricBLA
+        Nonparametric BLA with associated frequency and variance data.
+    nx : int
+        Desired model order (number of states).
+    q : int
+        Subspace dimension parameter. Must be greater than nx.
+
+    Returns
+    -------
+    ModelBLA
+        Parametrized state-space model identified from BLA data.
+    """
 
     freq = G_nonpar.freq_resp.freq
     f_data = freq.f[freq.f_idx]
@@ -110,7 +159,26 @@ def freq_iterative_optimization(
     solver: Union[optx.AbstractLeastSquaresSolver, optx.AbstractMinimiser],
     max_iter: int
 ) -> ModelBLA:
+    """
+    Refine a parametric model by minimizing the discrepancy with the BLA.
 
+    Parameters
+    ----------
+    G_nonpar : NonparametricBLA
+        Nonparametric BLA to fit.
+    G_par_init : ModelBLA
+        Initial parametric model to refine.
+    solver : Union[optx.AbstractLeastSquaresSolver, optx.AbstractMinimiser]
+        Optimistix solver: either a least-squares one or a more
+        general-purpose minimizer.
+    max_iter : int
+        Maximum number of optimization iterations.
+
+    Returns
+    -------
+    ModelBLA
+        Refined state-space model after optimization.
+    """
     # Create weighting matrix (inverse of total variance)
     if G_nonpar.var_tot is not None:
         W = 1 / G_nonpar.var_tot
@@ -135,11 +203,27 @@ def freq_iterative_optimization(
     return _normalize_states(G_par_opti, freq)
 
 
-def _loss_fn(theta0_dyn: ModelBLA, args: tuple) -> tuple:
+def _loss_fn(theta_dyn: ModelBLA, args: tuple) -> tuple:
+    """
+    Compute the loss and residual for frequency-domain model optimization.
 
+    Parameters
+    ----------
+    theta_dyn : ModelBLA
+        Dynamic parameters to optimize.
+    args : tuple
+        Tuple containing (static parameters, BLA data,
+                          frequency vector, weights).
+
+    Returns
+    -------
+    tuple
+        - A tuple of real and imaginary parts of the residual.
+        - A tuple containing the scalar mean squared error loss.
+    """
     theta_static, G_nonpar, f_data, W = args
 
-    theta = eqx.combine(theta0_dyn, theta_static)
+    theta = eqx.combine(theta_dyn, theta_static)
 
     G_par = theta.frequency_response(f_data)
     G_loss = jnp.sqrt(W / G_nonpar.size) * (G_par - G_nonpar)
@@ -151,15 +235,20 @@ def _loss_fn(theta0_dyn: ModelBLA, args: tuple) -> tuple:
 
 def _normalize_states(model: ModelBLA, freq: FrequencyData) -> ModelBLA:
     """
-    Normalize state variables by their standard deviation for better numerical
+    Normalize model states to have unit variance for better numerical
     conditioning.
 
-    Args:
-        model: BLA model to normalize
-        f_data: Frequency data for computing state response
+    Parameters
+    ----------
+    model : ModelBLA
+        Parametric model whose state basis should be normalized.
+    freq : FrequencyData
+        Frequency-domain input data for estimating state response.
 
-    Returns:
-        Normalized model with transformation T_x applied to states
+    Returns
+    -------
+    ModelBLA
+        Transformed model with normalized state coordinates.
     """
     nx, nu = model.B_u.shape
 
@@ -188,17 +277,17 @@ def _normalize_states(model: ModelBLA, freq: FrequencyData) -> ModelBLA:
 
 def _plot(bla: NonparametricBLA) -> None:
     """
-    Plot BLA magnitude with distortion levels.
+    Plot the magnitude of the BLA along with estimated distortion levels.
 
     Parameters
     ----------
     bla : NonparametricBLA
-        BLA results to plot
+        BLA object containing magnitude and variance estimates.
 
     Returns
     -------
     None
-        This function only produces a plot.
+        This function only produces a matplotlib plot.
     """
     ny, nu = bla.G.shape[1:3]
     freq = bla.freq_resp.freq

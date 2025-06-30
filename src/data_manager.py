@@ -1,5 +1,5 @@
 """
-Data structures for time and frequency domain system identification data.
+Data structures for time and frequency domain system identification.
 """
 
 from dataclasses import dataclass
@@ -8,35 +8,87 @@ import numpy as np
 
 @dataclass(frozen=True)
 class TimeData:
-    """Normalized time-domain data container."""
-    u: np.ndarray  # normalized inputs, shape (N, nu, R, P)
-    y: np.ndarray  # normalized outputs, shape (N, ny, R, P)
-    t: np.ndarray  # time vector of a single period, shape (N,)
-    ts: float  # sampling time in seconds, shape
+    """
+    Normalized time-domain data container.
+
+    Attributes
+    ----------
+    u : np.ndarray
+        Normalized input signals, shape (N, nu, R, P).
+    y : np.ndarray
+        Normalized output signals, shape (N, ny, R, P).
+    t : np.ndarray
+        Time vector of a single period, shape (N,).
+    ts : float
+        Sampling time in seconds.
+    """
+    u: np.ndarray
+    y: np.ndarray
+    t: np.ndarray
+    ts: float
 
 
 @dataclass(frozen=True)
 class FrequencyData:
-    """Normalized frequency-domain data container."""
-    U: np.ndarray  # normalized input DFT, shape (F, nu, R, P)
-    Y: np.ndarray  # normalized output DFT, shape (F, ny, R, P)
-    f: np.ndarray  # complete frequency vector, shape (N//2 + 1,)
-    f_idx: np.ndarray  # excited frequency indices, shape (F,)
-    fs: float  # sampling frequency in Hz
+    """
+    Normalized frequency-domain data container.
+
+    Attributes
+    ----------
+    U : np.ndarray
+        Normalized input DFT, shape (F, nu, R, P).
+    Y : np.ndarray
+        Normalized output DFT, shape (F, ny, R, P).
+    f : np.ndarray
+        Complete frequency vector, shape (N//2 + 1,).
+    f_idx : np.ndarray
+        Excited frequency indices, shape (F,).
+    fs : float
+        Sampling frequency in Hz.
+    """
+    U: np.ndarray
+    Y: np.ndarray
+    f: np.ndarray
+    f_idx: np.ndarray
+    fs: float
 
 
 @dataclass(frozen=True)
 class Normalizer:
-    """Stores normalization statistics for input/output signals."""
-    u_mean: np.ndarray  # input means, shape (nu,)
-    u_std: np.ndarray  # input means, shape (nu,)
-    y_mean: np.ndarray  # output means, shape (ny,)
-    y_std: np.ndarray  # output means, shape (ny,)
+    """
+    Stores normalization statistics for input/output signals.
+
+    Attributes
+    ----------
+    u_mean : np.ndarray
+        Input means, shape (nu,).
+    u_std : np.ndarray
+        Input standard deviations, shape (nu,).
+    y_mean : np.ndarray
+        Output means, shape (ny,).
+    y_std : np.ndarray
+        Output standard deviations, shape (ny,).
+    """
+    u_mean: np.ndarray
+    u_std: np.ndarray
+    y_mean: np.ndarray
+    y_std: np.ndarray
 
 
 @dataclass(frozen=True)
 class InputOutputData:
-    """Combined time and frequency domain data."""
+    """
+    Combined time and frequency domain data.
+
+    Attributes
+    ----------
+    time : TimeData
+        Time-domain representation of the signal.
+    freq : FrequencyData
+        Frequency-domain representation of the signal.
+    norm : Normalizer
+        Normalization statistics used for scaling.
+    """
     time: TimeData
     freq: FrequencyData
     norm: Normalizer

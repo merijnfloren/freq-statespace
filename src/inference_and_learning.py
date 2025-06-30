@@ -1,3 +1,7 @@
+"""
+NL-LFR initialization using inference and learning.
+"""
+
 from typing import NamedTuple, Union
 
 import equinox as eqx
@@ -6,14 +10,24 @@ import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
 
-from src.data_manager import FrequencyData, InputOutputData
+from src.data_manager import InputOutputData
 from src.basis_functions import AbstractBasisFunction
 from src.nonlinear_functions import create_custom_basis_function_model
 from src._model_structures import ModelBLA, ModelNonlinearLFR
-from src._solve import solve as _solve
+from src._solve import solve
 
 
 class _ThetaWZ(eqx.Module):
+    """
+    Decision variables for inference and learning.
+
+    Attributes
+    ----------
+    B_w_star : jnp.ndarray, shape (nx, nw)
+    C_z_star : jnp.ndarray, shape (nz, nx)
+    D_yw_star : jnp.ndarray, shape (ny, nw).
+    D_zu_star : jnp.ndarray, shape (nz, nu).
+    """
     B_w_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
     C_z_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
     D_yw_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
@@ -21,18 +35,42 @@ class _ThetaWZ(eqx.Module):
 
 
 class _OptiArgs(NamedTuple):
+    """
+    Static arguments used for optimization.
+
+    Attributes
+    ----------
+    theta_uy : tuple
+        Tuple of linear model matrices (A, B_u, C_y).
+    phi : AbstractBasisFunction
+        Nonlinear basis function model.
+    lambda_w : jnp.ndarray
+        Regularization weight that controls latent signal variance.
+    fixed_point_iters : int
+        Number of fixed-point iterations to run.
+    f_data : tuple
+        Tuple containing (frequencies, sampling frequency, U, Y, G_yu).
+    Lambda : jnp.ndarray
+        Inverse noise variance weighting matrices, shape (F, ny, ny).
+    Tz_inv : jnp.ndarray
+        Inverse normalization scaling for latent signal z, shape (nz, nz).
+    epsilon : jnp.ndarray
+        Regularization parameter to ensure numerical stability.
+    N : int
+        Number of time samples per realization.
+    """
     theta_uy: tuple
     phi: AbstractBasisFunction
     lambda_w: jnp.ndarray
     fixed_point_iters: int
-    freq: FrequencyData
+    f_data: tuple
     Lambda: jnp.ndarray
     Tz_inv: jnp.ndarray
-    G_yu: jnp.ndarray
+    epsilon: jnp.ndarray
     N: int
 
 
-def solve(
+def run(
    io_data: InputOutputData,
    bla: ModelBLA,
    phi: AbstractBasisFunction,
@@ -40,45 +78,111 @@ def solve(
    lambda_w: float,
    fixed_point_iters: int,
    solver: Union[optx.AbstractLeastSquaresSolver, optx.AbstractMinimiser],
-   max_iter: int,
-   seed: int
+   max_iter: int = 1000,
+   seed: int = 42,
+   epsilon: float = 1e-8
 ) -> ModelNonlinearLFR:
+    """
+    Run inference and learning.
 
+    Parameters
+    ----------
+    io_data : InputOutputData
+        Measured input-output data in time and frequency domains.
+    bla : ModelBLA
+        Initial linear model used to define A, B_u, C_y, D_yu matrices.
+    phi : AbstractBasisFunction
+        Basis function model for static nonlinearity.
+    nw : int
+        Dimension of the latent disturbance signal w.
+    lambda_w : float
+        Regularization weight that controls latent signal variance.
+    fixed_point_iters : int
+        Number of fixed-point iterations for z-w consistency.
+    solver : optx.AbstractLeastSquaresSolver or optx.AbstractMinimiser
+        Optimizer to minimize the loss function.
+    max_iter : int
+        Maximum number of optimization iterations.
+    seed : int
+        PRNG seed for parameter initialization.
+    epsilon : float
+        Numerical regularization constant for matrix inversion.
+
+    Returns
+    -------
+    ModelNonlinearLFR
+        Fully initialized NL-LFR model.
+    """
     theta0, args = _prepare_problem(
-        io_data, bla, phi, nw, lambda_w, fixed_point_iters, seed
+        io_data, bla, phi, nw, lambda_w, fixed_point_iters, seed, epsilon
     )
 
     # Optimize the model parameters
     print('Starting iterative optimization...')
-    _ = _solve(theta0, solver, args, _loss_fn, max_iter)
+    solve_result = solve(theta0, solver, args, _loss_fn, max_iter)
     print('\n')
 
-    return
+    theta_opt = solve_result.theta
+    aux = solve_result.aux
+
+    beta = aux[-1]
+
+    return ModelNonlinearLFR(
+        A=args.theta_uy[0],
+        B_u=args.theta_uy[1],
+        C_y=args.theta_uy[2],
+        D_yu=bla.D_yu,
+        B_w=theta_opt.B_w_star,
+        C_z=args.Tz_inv @ theta_opt.C_z_star,
+        D_yw=theta_opt.D_yw_star,
+        D_zu=args.Tz_inv @ theta_opt.D_zu_star,
+        f_static=create_custom_basis_function_model(
+            nw, phi, beta
+        ),
+        ts=io_data.time.ts
+    )
 
 
 def _loss_fn(theta: _ThetaWZ, args: _OptiArgs) -> tuple:
+    """
+    Loss function for inference + learning in nonlinear latent models.
+
+    Parameters
+    ----------
+    theta : _ThetaWZ
+        Decision variables.
+    args : _OptiArgs
+        Static arguments for inference and learning.
+
+    Returns
+    -------
+    tuple
+        - A tuple of real and imaginary parts of the residual.
+        - A tuple (MSE loss, beta_hat), where beta_hat are the learned
+          nonlinear parameters.
+    """
+    f_full, fs, U, Y, G_yu = args.f_data
 
     A = args.theta_uy[0]
     B_u = args.theta_uy[1]
-    C_y = args.theta_uy[2]
+    C_y = args.theta_uy[2].astype(complex)
 
-    B_w = theta.B_w_star
-    C_z = args.Tz_inv @ theta.C_z_star
+    B_w = theta.B_w_star.astype(complex)
+    C_z = (args.Tz_inv @ theta.C_z_star).astype(complex)
     D_yw = theta.D_yw_star
     D_zu = args.Tz_inv @ theta.D_zu_star
 
-    ny, nw = D_yw.shape
+    nw = D_yw.shape[1]
     nz, nu = D_zu.shape
-    F = args.freq.f.size
-    R = args.freq.U.shape[2]
+    F = U.shape[0]
+    R = U.shape[2]
 
     Theta = jnp.vstack((B_w, D_yw)).T @ jnp.vstack((B_w, D_yw))
+    Theta += args.epsilon / args.lambda_w * jnp.eye(nw)
 
-    fs = args.freq.fs
-    z = 2 * jnp.pi * args.freq.f / fs
+    z = 2 * jnp.pi * f_full / fs
     zj = jnp.exp(z * 1j)
 
-    I_nw = jnp.eye(nw)
     I_nx = jnp.eye(A.shape[0])
 
     def _compute_parametric_Gs(k):
@@ -86,19 +190,15 @@ def _loss_fn(theta: _ThetaWZ, args: _OptiArgs) -> tuple:
         return (
             C_y @ G_x[:, nu:] + D_yw,  # G_yw
             C_z @ G_x[:, :nu] + D_zu,  # G_zu
-            C_z @ G_x[:, nu:]          # G_zw
+            C_z @ G_x[:, nu:]  # G_zw
         )
 
     G_yw, G_zu, G_zw = jax.vmap(_compute_parametric_Gs)(jnp.arange(F))
 
-    G_yu = args.G_yu
-    U = args.freq.U
-    Y = args.freq.Y
-
     # --- Nonparametric inference ---
     def _infer_nonparametric_signals(k):
         Psi = G_yw[k, ...].T @ args.Lambda[k, ...]
-        Phi = Psi @ G_yw[k, ...] + args.lambda_w * Theta + 1e-10 * I_nw
+        Phi = Psi @ G_yw[k, ...] + args.lambda_w * Theta
         W_hat = jnp.linalg.solve(
             Phi,
             Psi @ (Y[k, ...] - G_yu[k, ...] @ U[k, ...])
@@ -130,7 +230,7 @@ def _loss_fn(theta: _ThetaWZ, args: _OptiArgs) -> tuple:
         Z = G_zu @ U + G_zw @ W
         z = jnp.fft.irfft(Z, n=args.N, axis=0)
         z_stacked = jnp.transpose(z, (2, 0, 1)).reshape(args.N * R, nz)
-        return args.phi.transform(z_stacked)
+        return args.phi.compute_features(z_stacked)
 
     phi_z = jax.lax.fori_loop(
         0, args.fixed_point_iters, _fixed_point_iteration, phi_z_star, unroll=True  # noqa: E501
@@ -142,11 +242,11 @@ def _loss_fn(theta: _ThetaWZ, args: _OptiArgs) -> tuple:
 
     # --- Loss computation ---
     Y_hat = G_yu @ U + G_yw @ W_beta
-    loss_Y = jnp.sqrt(args.Lambda / (R * args.N)) @ (Y - Y_hat)
+    Y_loss = jnp.sqrt(args.Lambda / (R * args.N)) @ (Y - Y_hat)
 
-    loss = (loss_Y.real, loss_Y.imag)
+    loss = (Y_loss.real, Y_loss.imag)
 
-    MSE_loss = jnp.sum(jnp.abs(loss_Y)**2)
+    MSE_loss = jnp.sum(jnp.abs(Y_loss)**2)
     return loss, (MSE_loss, beta_hat)
 
 
@@ -157,9 +257,37 @@ def _prepare_problem(
     nw: int,
     lambda_w: float,
     fixed_point_iters: int,
-    seed: int
+    seed: int,
+    epsilon: float
 ) -> tuple[ModelNonlinearLFR, dict]:
+    """
+    Prepare the problem data structures for inference and learning.
 
+    Parameters
+    ----------
+    io_data : InputOutputData
+        Combined time- and frequency-domain input-output data.
+    bla : ModelBLA
+        Initial linear model used for structure and response generation.
+    phi : AbstractBasisFunction
+        Basis function structure for nonlinear modeling.
+    nw : int
+        Dimension of disturbance signal.
+    lambda_w : float
+        Regularization on latent signal variance.
+    fixed_point_iters : int
+        Number of fixed-point iterations for z-w consistency.
+    seed : int
+        PRNG seed for reproducible parameter initialization.
+    epsilon : float
+        Regularization constant for numerical inversion.
+
+    Returns
+    -------
+    tuple
+        - _ThetaWZ: Initialized parameter module.
+        - _OptiArgs: Static arguments used throughout optimization.
+    """
     nz = phi.nz
     ny, nx = bla.C_y.shape
     N, nu, R, P = io_data.time.u.shape
@@ -177,7 +305,7 @@ def _prepare_problem(
     D_yw_star = jax.random.normal(key_D_yw, (ny, nw))
 
     theta_wz = _ThetaWZ(B_w_star, C_z_star, D_yw_star, D_zu_star)
-    theta_uy = (bla.A, bla.B_u, bla.C_y)
+    theta_uy = (jnp.asarray(bla.A), jnp.asarray(bla.B_u), jnp.asarray(bla.C_y))
 
     # Compute z_star normalization
     beta_dummy = np.zeros((phi.num_features(), nw))
@@ -205,7 +333,7 @@ def _prepare_problem(
     Lambda = np.zeros((F, ny, ny))
 
     Y = io_data.freq.Y
-    Y_P = Y.mean(axis=3)  # Average over periods
+    Y_P = Y.mean(axis=3)
     if P > 1:
         var_noise = ((np.abs(Y - Y_P[..., None])**2).sum(axis=(2, 3))
                      / R / (P - 1))
@@ -216,15 +344,20 @@ def _prepare_problem(
         for k in range(F):
             np.fill_diagonal(Lambda[k], np.eye(ny))
 
-    args = _OptiArgs(
+    U_bar = jnp.asarray(io_data.freq.U.mean(axis=3))
+    Y_bar = jnp.asarray(io_data.freq.Y.mean(axis=3))
+    f_full = io_data.freq.f
+    G_yu = bla.frequency_response(f_full)
+    f_data = (f_full, 1 / io_data.time.ts, U_bar, Y_bar, G_yu)
+
+    return theta_wz, _OptiArgs(
         theta_uy=theta_uy,
         phi=phi,
-        lambda_w=jnp.asarray(lambda_w, dtype=jnp.float32),
+        lambda_w=jnp.asarray(lambda_w),
         fixed_point_iters=fixed_point_iters,
-        freq=io_data.freq,
+        f_data=f_data,
         Lambda=jnp.asarray(Lambda),
         Tz_inv=T_z_inv,
-        G_yu=jnp.asarray(bla.frequency_response(io_data.freq.f)),
+        epsilon=jnp.asarray(epsilon),
         N=N
     )
-    return theta_wz, args

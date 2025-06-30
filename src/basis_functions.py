@@ -1,3 +1,14 @@
+"""
+Basis function classes for nonlinear feature expansion.
+
+This module defines a common interface for basis functions used in
+nonlinear modeling and provides concrete implementations for:
+
+- Generic multivariate polynomials;
+- Legendre polynomials (orthogonal);
+- Chebyshev polynomials (orthogonal).
+"""
+
 from abc import abstractmethod
 from itertools import combinations_with_replacement
 
@@ -12,18 +23,42 @@ class AbstractBasisFunction(eqx.Module, strict=True):
 
     @abstractmethod
     def compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
-        """From size (-1, nz) to size (-1, num_features())"""
+        """From size (-1, nz) to size (-1, num_features())."""
         pass
 
     @abstractmethod
     def num_features(self) -> int:
+        """Returns the total number of model features."""
         pass
 
 
 class Polynomial(AbstractBasisFunction, strict=True):
+    """
+    Multivariate polynomial basis function with configurable structure.
+
+    Parameters
+    ----------
+    nz : int
+        Number of input dimensions.
+    degree : int
+        Maximum degree of the polynomial terms.
+    type : str, default='full'
+        Type of polynomial degrees to include:
+        - 'full': all degrees up to `degree`
+        - 'odd' : only odd degrees (1, 3, 5, ...)
+        - 'even': only even degrees (2, 4, 6, ...)
+    cross_terms : bool, default=True
+        Whether to include cross-variable terms (e.g., z1 * z2).
+    offset : bool, default=True
+        Whether to include a constant offset (bias term).
+    linear : bool, default=True
+        Whether to include linear terms (degree-1 monomials).
+    tanh_clip : bool, default=True
+        Whether to apply elementwise tanh to inputs before feature computation.
+    """
     nz: int
     degree: int
-    type: str = 'full'  # 'full', 'odd', or 'even'
+    type: str = 'full'
     cross_terms: bool = True
     offset: bool = True
     linear: bool = True
@@ -100,7 +135,24 @@ class Polynomial(AbstractBasisFunction, strict=True):
 
 
 class LegendrePolynomial(AbstractBasisFunction, strict=True):
-    """Orthogonal in the univariate case over the [-1, 1] interval."""
+    """
+    Multivariate Legendre polynomial basis function.
+
+    Constructs a feature expansion using Legendre polynomials, which are
+    orthogonal over the interval [-1, 1] with unit weighting in the univariate
+    case.
+
+    Parameters
+    ----------
+    nz : int
+        Number of input dimensions.
+    degree : int
+        Maximum polynomial degree per input dimension.
+    offset : bool, default=True
+        Whether to include a constant offset (bias term).
+    tanh_clip : bool, default=True
+        Whether to apply elementwise tanh to inputs before feature computation.
+    """
     nz: int
     degree: int
     offset: bool = True
@@ -142,10 +194,31 @@ class LegendrePolynomial(AbstractBasisFunction, strict=True):
 
 
 class ChebyshevPolynomial(AbstractBasisFunction, strict=True):
-    """Orthogonal in the univariate case over the [-1, 1] interval."""
+    """
+    Multivariate Chebyshev polynomial basis function.
+
+    Constructs a feature expansion using Chebyshev polynomials, which are
+    orthogonal over the interval [-1, 1] with respect to a weight function
+    that depends on the polynomial type.
+
+    Parameters
+    ----------
+    nz : int
+        Number of input dimensions.
+    degree : int
+        Maximum polynomial degree per input dimension.
+    type : int
+        Type of Chebyshev polynomial:
+        - 1: First kind (orthogonal w.r.t. 1 / sqrt(1 - x²))
+        - 2: Second kind (orthogonal w.r.t. sqrt(1 - x²))
+    offset : bool, default=True
+        Whether to include a constant offset (bias term).
+    tanh_clip : bool, default=True
+        Whether to apply elementwise tanh to inputs before feature computation.
+    """
     nz: int
     degree: int
-    type: int  # 1 or 2
+    type: int
     offset: bool = True
     tanh_clip: bool = True
     _num_features: int = eqx.field(init=False, repr=False)
