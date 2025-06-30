@@ -329,7 +329,7 @@ def _prepare_problem(
     z_star_min, z_star_max = z_star.min(axis=(0, 2)), z_star.max(axis=(0, 2))
     T_z_inv = jnp.diag(2 / (z_star_max - z_star_min))
 
-    # Compute Lambda
+    # Compute weighting matrix Lambda
     Lambda = np.zeros((F, ny, ny))
 
     Y = io_data.freq.Y

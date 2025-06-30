@@ -156,7 +156,7 @@ def _prepare_problem(
     u_bar = jnp.mean(u, axis=-1)
     Y_bar = jnp.mean(Y, axis=-1)
 
-    # Compute Lambda
+    # Compute weighting matrix Lambda
     Lambda = np.zeros((F, ny, ny))
 
     Y = io_data.freq.Y
