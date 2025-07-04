@@ -1,0 +1,61 @@
+[project]
+name = "freq-statespace"
+version = "0.1.0"
+description = "Frequency-domain (nonlinear) state-space identification using JAX."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE*"]
+authors = [
+  {name = "Merijn Floren", email = "merijn.floren@gmail.com"}
+]
+keywords = [
+    "system-identification",
+    "state-space-models",
+    "subspace-identification",
+    "frequency-domain",
+    "best-linear-approximation",
+    "nonlinear-benchmarks",
+    "nonlinear-regression",
+    "optimization",
+    "jax",
+    "equinox",
+    "optimistix"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent"
+]
+dependencies = [
+  "jax>=0.4.38",
+  "jaxtyping>=0.2.24",
+  "optimistix>=0.0.10",
+  "equinox>=0.12.2",
+  "optax>=0.2.5",
+  "nonlinear_benchmarks"
+]
+
+[project.urls]
+homepage = "https://github.com/merijnfloren/freq-statespace"
+
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+extend-include = ["*.ipynb"]
+exclude = ["dep"]
+
+[tool.ruff.lint]
+fixable = ["I001", "F401", "UP"]
+select = ["E", "F", "I001", "UP"]
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+order-by-type = true

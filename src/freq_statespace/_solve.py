@@ -1,21 +1,15 @@
 """
-General-purpose wrapper around Optimistix solvers for JAX-based optimization.
-
-This module provides a unified `solve` function that supports both least
-squares and general minimization problems using Optimistix solvers. It records
-iteration timing, convergence status, loss history, and auxiliary outputs.
+General-purpose wrapper/logger around Optimistix solvers.
 """
-
-from dataclasses import dataclass
 import time
-from typing import Any, cast, Union
+from dataclasses import dataclass
+from typing import Any, cast
 
 import equinox as eqx
 import jax
-from jaxtyping import PyTree, Scalar
 import numpy as np
-
 import optimistix as optx
+from jaxtyping import PyTree, Scalar
 from optimistix._custom_types import Aux, Fn, Out, Y
 from optimistix._least_squares import _ToMinimiseFn
 from optimistix._misc import OutAsArray
@@ -30,8 +24,9 @@ class SolveResult:
     ----------
     theta : Any
         Final solution vector or PyTree of parameters.
-    aux : Any
-        Auxiliary output from the final loss evaluation.
+    aux : tuple
+        Auxiliary output from the final loss evaluation. The first element is
+        always the scalar loss value.
     loss_history : np.ndarray
         Sequence of loss values at each iteration.
     iter_count : int
@@ -54,13 +49,13 @@ class SolveResult:
 
 def solve(
     theta_init: Y,
-    solver: Union[optx.AbstractLeastSquaresSolver, optx.AbstractMinimiser],
+    solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser,
     args: PyTree[Any],
     loss_fn: Fn,
     max_iter: int
 ) -> SolveResult:
     """
-    Solve an optimization problem using a JAX-compatible Optimistix solver.
+    Solves an optimization problem using a JAX-compatible Optimistix solver.
 
     Supports both least-squares and general minimization solvers. Tracks
     iteration timing and loss history. Applies JIT compilation to improve
@@ -70,7 +65,7 @@ def solve(
     ----------
     theta_init : Any
         Initial guess for the parameters to optimize (PyTree).
-    solver : AbstractLeastSquaresSolver or AbstractMinimiser
+    solver : `AbstractLeastSquaresSolver` or `AbstractMinimiser`
         Solver instance from the Optimistix library.
     args : PyTree[Any]
         Additional static/dynamic arguments passed to the loss function.
@@ -128,14 +123,10 @@ def solve(
         theta, state, aux = step(y=theta, state=state)
         iter_end = time.perf_counter()
 
-        loss = aux[0]
-        jax.debug.print(
-            "   Iteration {iter_count}, Loss: {loss:.4e}",
-            iter_count=iter_count,
-            loss=loss
-        )
+        scalar_loss = aux[0]
+        jax.debug.print("    Iter {0} | loss = {1:.4e}", iter_count + 1, scalar_loss)  # noqa: E501
 
-        loss_history[iter_count] = loss
+        loss_history[iter_count] = scalar_loss
         iter_times[iter_count] = iter_end - iter_start
 
         converged = terminate(y=theta, state=state)[0]

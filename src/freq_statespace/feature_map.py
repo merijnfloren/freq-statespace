@@ -1,12 +1,6 @@
 """
-Basis function classes for nonlinear feature expansion.
-
-This module defines a common interface for basis functions used in
-nonlinear modeling and provides concrete implementations for:
-
-- Generic multivariate polynomials;
-- Legendre polynomials (orthogonal);
-- Chebyshev polynomials (orthogonal).
+Nonlinear feature mappings (mapping `z` to `features`). All mappings are
+linear in the parameters and can hence be used for inference and learning.
 """
 
 from abc import abstractmethod
@@ -18,12 +12,17 @@ import jax.numpy as jnp
 import numpy as np
 
 
-class AbstractBasisFunction(eqx.Module, strict=True):
+class AbstractFeatureMap(eqx.Module, strict=True):
+    """
+    Abstract base class for feature mappings. Subclasses must provide the
+    attribute `nz`, and must implement the methods `_compute_features` and
+    `num_features`.
+    """
     nz: eqx.AbstractVar[int]
 
     @abstractmethod
-    def compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
-        """From size (-1, nz) to size (-1, num_features())."""
+    def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
+        """From size (-1, `nz`) to size (-1, `num_features()`)."""
         pass
 
     @abstractmethod
@@ -32,39 +31,36 @@ class AbstractBasisFunction(eqx.Module, strict=True):
         pass
 
 
-class Polynomial(AbstractBasisFunction, strict=True):
+class Polynomial(AbstractFeatureMap, strict=True):
     """
-    Multivariate polynomial basis function with configurable structure.
+    Flexible polynomial feature map.
 
-    Parameters
+    Attributes
     ----------
     nz : int
-        Number of input dimensions.
+        Number of input features (dimension of latent signal `z`).
     degree : int
-        Maximum degree of the polynomial terms.
-    type : str, default='full'
-        Type of polynomial degrees to include:
-        - 'full': all degrees up to `degree`
-        - 'odd' : only odd degrees (1, 3, 5, ...)
-        - 'even': only even degrees (2, 4, 6, ...)
-    cross_terms : bool, default=True
-        Whether to include cross-variable terms (e.g., z1 * z2).
-    offset : bool, default=True
-        Whether to include a constant offset (bias term).
-    linear : bool, default=True
-        Whether to include linear terms (degree-1 monomials).
-    tanh_clip : bool, default=True
-        Whether to apply elementwise tanh to inputs before feature computation.
+        Maximum polynomial degree.
+    type : str
+        Type of polynomial (`"full"`, `"odd"`, or `"even"`).
+    cross_terms : bool
+        If `True`, includes cross-terms in the polynomial features.
+    offset : bool
+        If `True`, includes a constant offset term in the features.
+    linear : bool
+        If `True`, includes linear terms in the polynomial features.
+    tanh_clip : bool
+        If `True`, applies tanh clipping to the input features.
     """
     nz: int
     degree: int
-    type: str = 'full'
+    type: str = "full"
     cross_terms: bool = True
     offset: bool = True
     linear: bool = True
     tanh_clip: bool = True
 
-    # Internal attributes (computed within the class)
+    # Post-init attributes
     _num_features: int = eqx.field(init=False, repr=False)
     _combination_matrix: jnp.ndarray = eqx.field(init=False, repr=False)
 
@@ -78,7 +74,7 @@ class Polynomial(AbstractBasisFunction, strict=True):
             active_degrees = range(2, self.degree + 1, 2)
         else:
             raise ValueError(
-                'Invalid polynomial type. Must be "full", "odd", or "even".'
+                'Invalid polynomial `type`. Must be "full", "odd", or "even".'
             )
 
         max_degree = active_degrees[-1]
@@ -105,13 +101,13 @@ class Polynomial(AbstractBasisFunction, strict=True):
         self._num_features = num_features
         self._combination_matrix = jnp.array(combination_matrix)
 
-    def compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
+    def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
 
         N, nz = z.shape
-
         if nz != self.nz:
             raise ValueError(
-                'Input size does not match the basis function size.'
+                'Input size does not match the basis function size: '
+                '`z.shape[1] != nz`.'
             )
 
         if self.tanh_clip:
@@ -134,29 +130,28 @@ class Polynomial(AbstractBasisFunction, strict=True):
         return self._num_features
 
 
-class LegendrePolynomial(AbstractBasisFunction, strict=True):
+class LegendrePolynomial(AbstractFeatureMap, strict=True):
     """
-    Multivariate Legendre polynomial basis function.
+    Legendre polynomial, which is orthogonal over the interval [-1, 1] with
+    unit weighting in the univariate case.
 
-    Constructs a feature expansion using Legendre polynomials, which are
-    orthogonal over the interval [-1, 1] with unit weighting in the univariate
-    case.
-
-    Parameters
+    Attributes
     ----------
     nz : int
-        Number of input dimensions.
+        Number of input features (dimension of latent signal `z`).
     degree : int
-        Maximum polynomial degree per input dimension.
-    offset : bool, default=True
-        Whether to include a constant offset (bias term).
-    tanh_clip : bool, default=True
-        Whether to apply elementwise tanh to inputs before feature computation.
+        Maximum polynomial degree.
+    offset : bool
+        If `True`, includes a constant offset term in the features.
+    tanh_clip : bool
+        If `True`, applies tanh clipping to the input features.
     """
     nz: int
     degree: int
     offset: bool = True
     tanh_clip: bool = True
+
+    # Post-init attribute
     _num_features: int = eqx.field(init=False, repr=False)
 
     def __post_init__(self):
@@ -164,7 +159,7 @@ class LegendrePolynomial(AbstractBasisFunction, strict=True):
             self.nz * self.degree + (1 if self.offset else 0)
         )
 
-    def compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
+    def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
 
         def _compute_phi_z(k, state):
             phi_z, phi_z_previous, phi_z_two_before = state
@@ -193,44 +188,43 @@ class LegendrePolynomial(AbstractBasisFunction, strict=True):
         return self._num_features
 
 
-class ChebyshevPolynomial(AbstractBasisFunction, strict=True):
+class ChebyshevPolynomial(AbstractFeatureMap, strict=True):
     """
-    Multivariate Chebyshev polynomial basis function.
+    Chebyshev polynomial, which is orthogonal over the interval [-1, 1] with
+    respect to a weight function that depends on the polynomial `type`.
 
-    Constructs a feature expansion using Chebyshev polynomials, which are
-    orthogonal over the interval [-1, 1] with respect to a weight function
-    that depends on the polynomial type.
-
-    Parameters
+    Attributes
     ----------
     nz : int
-        Number of input dimensions.
+        Number of input features (dimension of latent signal `z`).
     degree : int
-        Maximum polynomial degree per input dimension.
+        Maximum polynomial degree.
     type : int
         Type of Chebyshev polynomial:
-        - 1: First kind (orthogonal w.r.t. 1 / sqrt(1 - x²))
-        - 2: Second kind (orthogonal w.r.t. sqrt(1 - x²))
-    offset : bool, default=True
-        Whether to include a constant offset (bias term).
-    tanh_clip : bool, default=True
-        Whether to apply elementwise tanh to inputs before feature computation.
+        - `1`: First kind (orthogonal w.r.t. 1 / sqrt(1 - x²))
+        - `2`: Second kind (orthogonal w.r.t. sqrt(1 - x²))
+    offset : bool
+        If `True`, includes a constant offset term in the features.
+    tanh_clip : bool
+        If `True`, applies tanh clipping to the input features.
     """
     nz: int
     degree: int
     type: int
     offset: bool = True
     tanh_clip: bool = True
+
+    # Post-init attribute
     _num_features: int = eqx.field(init=False, repr=False)
 
     def __post_init__(self):
         if self.type not in [1, 2]:
-            raise ValueError('Invalid Chebyshev polynomial type.')
+            raise ValueError('Invalid polynomial `type`. Must be `1` or `2`.')
         self._num_features = (
             self.nz * self.degree + (1 if self.offset else 0)
         )
 
-    def compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
+    def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
 
         def _compute_phi_z(k, state):
             phi_z, phi_z_previous, phi_z_two_before = state
