@@ -17,9 +17,6 @@ build/
 .vscode/
 .idea/
 
-# Figures
-*.svg
-
 # Linters/formatters
 .flake8
 .ruff_cache/
