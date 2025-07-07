@@ -1,14 +1,14 @@
 # freq-statespace
 A flexible [JAX](https://docs.jax.dev/en/latest/index.html)-based package for nonlinear state-space identification using frequency-domain optimization techniques. 
 
-The specific discrete-time model structure follows the nonlinear LFR (NL-LFR) form, which is a very general block-oriented formulation consisting of an LTI system with a static feedback nonlinearity. This internal feedback setup is key to capturing complex behaviors found in many real-world systems.
+It’s built around the **nonlinear Linear Fractional Representation (NL-LFR)** model structure, a powerful block-oriented framework that connects an LTI system with a static feedback nonlinearity. This internal feedback setup is key to capturing complex behaviors found in many real-world systems.
 <div align="center">
-  <img src="model_structure.svg" width="350px" />
+  <img src="model_structure.svg" width="500px" />
 </div>
 
 ### Basic usage
 
-The package assumes input-output data $u(n)$, $y(n)$ for $n=0,\ldots,N-1$, from a system excited by a periodic input, with an integer number of steady-state output periods recorded. The NL-LFR model is defined as:
+The package works with input–output data sequences $u(n)$ and $y(n)$ for $n = 0, \ldots, N-1$, assuming the system is excited by a periodic input and that an integer number of steady-state output periods has been recorded. The specific NL-LFR structure is defined as:
 ```math
   \begin{align*}
     x(n+1) &= A x(n) + B_u u(n) + B_w w(n),\\
@@ -25,11 +25,11 @@ A typical step-wise identification procedure is as follows:
    Initializes the matrices $A$, $B_u$, $C_y$ and $D_{yu}$ using the [frequency-domain subspace method](https://github.com/tomasmckelvey/fsid), and refines these estimates through iterative optimization. If you're only interested in linear state-space models, you can stop the identification process here.
 
 2. **NL-LFR initialization**.
-  Applies the [frequency-domain inference and learning method](https://arxiv.org/abs/2503.14409) to efficiently initialize the remaining model parameters while keeping the BLA parameters fixed. This step requires $f(\cdot)$ to be a linear-in-parameters model, for example using polynomial basis functions.
+  Applies the [frequency-domain inference and learning method](https://arxiv.org/abs/2503.14409) to efficiently initialize the remaining model parameters while keeping the BLA parameters fixed. This step requires $f(\cdot)$ to be a linear-in-the-parameters model, for example one based on polynomial basis functions.
 
 3. **NL-LFR optimization**. Performs iterative refinement of all model parameters using time-domain simulations. This is the most computationally demanding step, mainly due to the sequential nature of the forward simulations. Fortunately, the previous steps should have provided an initialization that is already close to a good local minimum.
 
-It is also possible to skip the inference and learning step and go straight to nonlinear optimization. An advantage of this approach is that this puts no restriction on the structure of $f(\cdot)$, i.e., it does not require a model that is linear in the parameters.
+It is also possible to skip the inference and learning step and go straight to nonlinear optimization. An advantage of this approach is that it puts no restriction on the structure of $f(\cdot)$, i.e., it does not require a model that is linear in the parameters.
 
 ### Features
 - Provides two workflows for identifying nonlinear LFR state-space models by primarily exploiting a frequency-domain formulation that enables inherent parallelism.
@@ -59,32 +59,32 @@ data = fss.load_and_preprocess_silverbox_data()  # 8192 x 6 samples
 # Step 1: BLA estimation
 nx = 2  # state dimension
 q = nx + 1  # subspace dimensioning parameter
-model = fss.bla.subspace_id(data, nx, q)  # NRMSE 18.36%, non-iterative
-model = fss.bla.optimize(model, data)  # NRMSE 13.17%, 5 iters, 1.43ms/iter
+bla = fss.lin.subspace_id(data, nx, q)  # NRMSE 18.36%, non-iterative
+bla = fss.lin.optimize(bla, data)  # NRMSE 13.17%, 6 iters, 1.97ms/iter
 ```
 Next, we proceed with inference and learning, followed by full nonlinear optimization:
 
 ```python
 # Step 2: Inference and learning
-phi = fss.feature_map.Polynomial(nz=1, degree=3)
-model = fss.nonlin_lfr.inference_and_learning(
-    model, data, phi=phi, nw=1, lambda_w=1e-2, fixed_point_iters=5
-)  # NRMSE 1.11%, 47 iters, 12.9ms/iter
+phi = fss.f_static.basis.Polynomial(nz=1, degree=3)
+nllfr = fss.nonlin.inference_and_learning(
+    bla, data, phi=phi, nw=1, lambda_w=1e-2, fixed_point_iters=5
+)  # NRMSE 1.11%, 42 iters, 13.2ms/iter
 
 # Step 3: Nonlinear optimization
-model = fss.nonlin_lfr.optimize(model, data)  # NRMSE 0.44%, 100 iters, 436ms/iter
+nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.44%, 100 iters, 387ms/iter
 ```
 
-Alternatively, we could skip inference and learning and jump straight to nonlinear optimization. In this example we use a neural network in the feedback loop:
+Alternatively, we could skip inference and learning and jump straight to nonlinear optimization. In this example we use a neural network:
 ```python
 import jax
 
 # Step 2: Nonlinear optimization
-f_static = fss.nonlin_func.NeuralNetwork(
+neural_net = fss.f_static.NeuralNetwork(
     nw=1, nz=1, num_layers=1, num_neurons_per_layer=10, activation=jax.nn.relu
 )
-model = fss.nonlin_lfr.construct(bla=model, f_static=f_static)
-model = fss.nonlin_lfr.optimize(model, data)  # NRMSE 0.68%, 100 iters, 401ms/iter
+nllfr = fss.nonlin.construct(bla, neural_net)
+nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.54%, 100 iters, 356ms/iter
 ```
 > **Note:** Iteration timings were measured on an NVIDIA T600 Laptop GPU.
 

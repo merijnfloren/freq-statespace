@@ -1,6 +1,4 @@
-"""
-Nonparametric BLA, parametric subspace identification, and optimizer.
-"""
+"""Nonparametric BLA, parametric subspace identification, and optimizer."""
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,7 +14,7 @@ from freq_statespace._data_manager import (
     NonparametricBLA,
 )
 from freq_statespace._frequency_response import compute_frequency_response
-from freq_statespace._model_structure import ModelBLA
+from freq_statespace._model_structures import ModelBLA
 from freq_statespace._solve import solve
 
 
@@ -24,10 +22,7 @@ MAX_ITER = 1000
 
 
 def _compute_weighted_residual(theta_dyn: ModelBLA, args: tuple) -> tuple:
-    """
-    Computes the weighted residuals between the nonparametric and parametric
-    BLA.
-    """
+    """Compute the weighted residuals between the nonparametric and parametric BLA."""
     theta_static, G_nonpar, f_data, W = args
 
     theta = eqx.combine(theta_dyn, theta_static)
@@ -41,10 +36,7 @@ def _compute_weighted_residual(theta_dyn: ModelBLA, args: tuple) -> tuple:
 
 
 def _normalize_states(model: ModelBLA, freq: FrequencyData) -> ModelBLA:
-    """
-    Normalizes BLA model states to have unit variance for better numerical
-    conditioning in subsequent optimization steps.
-    """
+    """Normalize BLA model states to have unit variance."""
     nx, nu = model.B_u.shape
 
     f_data = freq.f
@@ -77,8 +69,7 @@ def _normalize_states(model: ModelBLA, freq: FrequencyData) -> ModelBLA:
 
 
 def compute_nonparametric(U: np.ndarray, Y: np.ndarray) -> NonparametricBLA:
-    """
-    Computes nonparametric BLA and variance estimates from input-output data.
+    """Compute nonparametric BLA and variance estimates from input-output data.
 
     Parameters
     ----------
@@ -94,6 +85,7 @@ def compute_nonparametric(U: np.ndarray, Y: np.ndarray) -> NonparametricBLA:
     `NonparametricBLA`
         Nonparametric BLA estimate with frequency response and variance
         estimates.
+
     """
     G = compute_frequency_response(U, Y)
 
@@ -125,9 +117,7 @@ def compute_nonparametric(U: np.ndarray, Y: np.ndarray) -> NonparametricBLA:
 
 
 def subspace_id(data: InputOutputData, nx: int, q: int) -> ModelBLA:
-    """
-    Estimates, non-iteratively, a parametric state-space model using the
-    frequency-domain subspace identification method.
+    """Parametrize a state-space model using the frequency-domain subspace method.
 
     Parameters
     ----------
@@ -147,6 +137,7 @@ def subspace_id(data: InputOutputData, nx: int, q: int) -> ModelBLA:
     ------
     ValueError
         If `q `is not greater than `nx`.
+
     """
     header = " Frequency-domain subspace identification "
     print(f"{header:=^72}")
@@ -204,9 +195,7 @@ def optimize(
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
     max_iter: int = MAX_ITER,
 ) -> ModelBLA:
-    """
-    Refines a parametric BLA model by iteratively minimizing the discrepancy
-    between the frequency responses of the model and the nonparametric BLA.
+    """Refine the parameters of the BLA using frequency-response computations.
 
     Parameters
     ----------
@@ -224,6 +213,7 @@ def optimize(
     -------
     `ModelBLA`
         BLA model with optimized parameters.
+
     """
     header = " BLA optimization  "
     print(f"{header:=^72}")

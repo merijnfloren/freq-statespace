@@ -1,6 +1,4 @@
-"""
-Centralized default constants used across the package.
-"""
+"""Centralized default constants used across the package."""
 
 import optimistix as optx
 

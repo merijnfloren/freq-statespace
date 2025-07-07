@@ -1,6 +1,4 @@
-"""
-BLA and NL-LFR model classes, optimized for use with JAX and Equinox.
-"""
+"""BLA and NL-LFR model classes, optimized for use with JAX and Equinox."""
 
 import equinox as eqx
 import jax
@@ -8,12 +6,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from freq_statespace._data_manager import Normalizer
-from freq_statespace.nonlin_func import AbstractNonlinearFunction
+from freq_statespace.f_static._nonlin_funcs import AbstractNonlinearFunction
 
 
 class ModelBLA(eqx.Module):
-    """
-    BLA model class.
+    """BLA model class.
 
     Attributes
     ----------
@@ -25,6 +22,7 @@ class ModelBLA(eqx.Module):
         Sampling time (in seconds) of the discrete system.
     norm : Normalizer
         Contains means and standard deviations of input-output signals.
+
     """
 
     A: jnp.ndarray = eqx.field(converter=jnp.asarray)
@@ -37,9 +35,9 @@ class ModelBLA(eqx.Module):
     def _simulate(
         self, u: np.ndarray, *, offset: int = 0, x0: np.ndarray | None = None
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """
-        Simulates the BLA model in the time domain. To be used within
-        an optimization loop, as it assumes normalized data.
+        """Simulate the BLA model in the time domain.
+
+        To be used within an optimization loop, as it assumes normalized data.
 
         Parameters
         ----------
@@ -71,11 +69,11 @@ class ModelBLA(eqx.Module):
             Static nonlinear function inputs.
 
         Raises
-        -------
+        ------
         ValueError
             If `offset` is not a non-negative integer `≤ N`.
-        """
 
+        """
         def _make_step(k, state):
             X, Y_accum, X_accum = state
             U = jax.lax.dynamic_slice(u, (k, 0, 0), (1, nu, R)).squeeze(axis=0)
@@ -116,8 +114,7 @@ class ModelBLA(eqx.Module):
         *,
         x0: np.ndarray | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """
-        Simulates the BLA model in the time domain.
+        """Simulate the BLA model in the time domain.
 
         Parameters
         ----------
@@ -136,6 +133,7 @@ class ModelBLA(eqx.Module):
             Time vector corresponding to the simulation.
         x : np.ndarray, shape (N, nx) or (N,)
             Simulated state trajectories. Shape is (N,) in case `nx == 1`.
+
         """
         # Validate if `u` is 1D or 2D, then extend to 3D
         if u.ndim == 1:
@@ -180,9 +178,9 @@ class ModelBLA(eqx.Module):
         self,
         f: np.ndarray,
     ) -> jnp.ndarray:
-        """
-        Computes the frequency response of the system. To be used within
-        an optimization loop, as it assumes normalized data.
+        """Compute the frequency response of the system.
+
+        To be used within an optimization loop, as it assumes normalized data.
 
         Parameters
         ----------
@@ -193,8 +191,8 @@ class ModelBLA(eqx.Module):
         -------
         G : jnp.ndarray
             Frequency response matrix of shape (F_f, ny, nu).
-        """
 
+        """
         def G(k):
             G_x = jnp.linalg.solve(zj[k] * I_nx - self.A, B_u)
             return C_y @ G_x + self.D_yu
@@ -209,14 +207,15 @@ class ModelBLA(eqx.Module):
         return jax.vmap(G)(np.arange(len(f)))
 
     def num_parameters(self) -> int:
-        """Returns the total number of model parameters."""
+        """Return the total number of model parameters."""
         return self.A.size + self.B_u.size + self.C_y.size + self.D_yu.size
 
 
 class ModelNonlinearLFR(ModelBLA):
-    """
-    NL-LFR model class. Inherits from `ModelBLA` and adds linear matrices `B_w`, `C_z`,
-    `D_yw`, `D_zu`, and static nonlinear feedback.
+    """NL-LFR model class.
+
+    Inherits from `ModelBLA` and adds linear matrices `B_w`, `C_z`, `D_yw`, `D_zu`, and
+    static nonlinear feedback.
 
     Attributes
     ----------
@@ -226,6 +225,7 @@ class ModelNonlinearLFR(ModelBLA):
     D_zu : jnp.ndarray, shape (nz, nu)
     f_static : `AbstractNonlinearFunction`
         Static nonlinear function mapping `z` to `w`.
+
     """
 
     B_w: jnp.ndarray = eqx.field(converter=jnp.asarray)
@@ -237,9 +237,9 @@ class ModelNonlinearLFR(ModelBLA):
     def _simulate(
         self, u: np.ndarray, *, offset: int = 0, x0: np.ndarray | None = None
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """
-        Simulates the NL-LFR model in the time domain. To be used within
-        an optimization loop, as it assumes normalized data.
+        """Simulate the NL-LFR model in the time domain.
+
+        To be used within an optimization loop, as it assumes normalized data.
 
         Parameters
         ----------
@@ -271,11 +271,11 @@ class ModelNonlinearLFR(ModelBLA):
             Static nonlinear function inputs.
 
         Raises
-        -------
+        ------
         ValueError
             If `offset` is not a non-negative integer `≤ N`.
-        """
 
+        """
         def _make_step(k, state):
             X, Y_accum, X_accum, W_accum, Z_accum = state
             U = jax.lax.dynamic_slice(u, (k, 0, 0), (1, nu, R)).squeeze(axis=0)
@@ -327,8 +327,7 @@ class ModelNonlinearLFR(ModelBLA):
         *,
         x0: np.ndarray | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """
-        Simulates the NL-LFR model in the time domain.
+        """Simulate the NL-LFR model in the time domain.
 
         Parameters
         ----------
@@ -351,8 +350,8 @@ class ModelNonlinearLFR(ModelBLA):
             Static nonlinear function outputs. Shape is (N,) in case `nw == 1`.
         z : np.ndarray, shape (N, nz) or (N,)
             Static nonlinear function inputs. Shape is (N,) in case `nz == 1`.
-        """
 
+        """
         # Validate if `u` is 1D or 2D, then extend to 3D
         if u.ndim == 1:
             u = u[:, None, None]
@@ -393,7 +392,7 @@ class ModelNonlinearLFR(ModelBLA):
         return np.asarray(y), t, np.asarray(x), np.asarray(w), np.asarray(z)
 
     def num_parameters(self) -> int:
-        """Returns the total number of model parameters."""
+        """Return the total number of model parameters."""
         return (
             self.B_w.size
             + self.C_z.size

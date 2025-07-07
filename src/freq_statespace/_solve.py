@@ -1,6 +1,4 @@
-"""
-General-purpose wrapper/logger around Optimistix solvers.
-"""
+"""General-purpose wrapper/logger around Optimistix solvers."""
 import time
 from dataclasses import dataclass
 from typing import Any, cast
@@ -17,8 +15,7 @@ from optimistix._misc import OutAsArray
 
 @dataclass(frozen=True)
 class SolveResult:
-    """
-    Result of the optimization process.
+    """Result of the optimization process.
 
     Attributes
     ----------
@@ -37,7 +34,9 @@ class SolveResult:
         Whether the termination criterion was met.
     wall_time : float
         Total wall-clock time (in seconds) spent in the optimization loop.
+
     """
+
     theta: Y
     aux: Any
     loss_history: np.ndarray
@@ -54,8 +53,7 @@ def solve(
     loss_fn: Fn,
     max_iter: int
 ) -> SolveResult:
-    """
-    Solves an optimization problem using a JAX-compatible Optimistix solver.
+    """Solve an optimization problem using a JAX-compatible Optimistix solver.
 
     Supports both least-squares and general minimization solvers. Tracks
     iteration timing and loss history. Applies JIT compilation to improve
@@ -79,8 +77,8 @@ def solve(
     SolveResult
         Structured result containing final parameters, loss trace, timing,
         and convergence information.
-    """
 
+    """
     loss_fn = OutAsArray(loss_fn)
     if isinstance(solver, optx.AbstractMinimiser):
         loss_fn = _ToMinimiseFn(loss_fn)

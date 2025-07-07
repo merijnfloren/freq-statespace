@@ -1,6 +1,4 @@
-"""
-NL-LFR model inference and learning, and nonlinear optimization.
-"""
+"""NL-LFR model inference and learning, and nonlinear optimization."""
 
 from typing import NamedTuple
 
@@ -13,14 +11,17 @@ import optimistix as optx
 from freq_statespace import _misc
 from freq_statespace._config import SEED, SOLVER
 from freq_statespace._data_manager import FrequencyData, InputOutputData
-from freq_statespace._model_structure import ModelBLA, ModelNonlinearLFR
+from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
 from freq_statespace._solve import solve
-from freq_statespace.feature_map import AbstractFeatureMap
-from freq_statespace.nonlin_func import AbstractNonlinearFunction, BasisFunctionModel
+from freq_statespace.f_static._feature_maps import AbstractFeatureMap
+from freq_statespace.f_static._nonlin_funcs import (
+    AbstractNonlinearFunction,
+    BasisFunctionModel,
+)
 
 
 MAX_ITER_INFERENCE_AND_LEARNING = 1000
-MAX_ITER_NONLIN_OPTIMIZATION = 100
+MAX_ITER_OPTIMIZATION = 100
 EPSILON = 1e-10
 
 
@@ -59,23 +60,13 @@ class _ArgsNonlinOptimization(NamedTuple):
 
 
 def _compute_weighting_matrix(freq: FrequencyData) -> jnp.ndarray:
-    """
-    Computes weighting matrix for the loss function.
-
-    Parameters
-    ----------
-    freq : `FrequencyData`
-
-    Returns
-    -------
-    Lambda : jnp.ndarray, shape (F, ny, ny)
-        Each (ny x ny) matrix is diagonal with elements equal to the inverse
-        of the noise variance for each output at each frequency. If only one
-        is available (`P==1`), identity matrices are returned instead.
-    """
+    """Compute weighting matrix for the loss function."""
     F, ny = freq.Y.shape[:2]
     var_noise = freq.Y_var_noise
 
+    # Each (ny x ny) matrix is diagonal with elements equal to the inverse of the noise
+    # variance for each output at each frequency. If only one is available (`P==1`),
+    # identity matrices are returned instead.
     Lambda = np.zeros((F, ny, ny))
     for k in range(F):
         diag = np.eye(ny) if var_noise is None else np.diag(1 / var_noise[k])
@@ -85,10 +76,7 @@ def _compute_weighting_matrix(freq: FrequencyData) -> jnp.ndarray:
 
 
 def _compute_bla_loss(bla: ModelBLA, data: InputOutputData) -> float:
-    """
-    Computes the BLA performance on the loss function that is used
-    in this module.
-    """
+    """Compute the BLA performance on the loss function that is used in this module."""
     Lambda = _compute_weighting_matrix(data.freq)
     Y = data.freq.Y
     U = data.freq.U
@@ -103,8 +91,7 @@ def _compute_bla_loss(bla: ModelBLA, data: InputOutputData) -> float:
 def _create_basis_function_model_given_beta(
     nw: int, phi: AbstractFeatureMap, beta: jnp.ndarray
 ) -> BasisFunctionModel:
-    """
-    Creates a `BasisFunctionModel` instance given `beta`.
+    """Create a `BasisFunctionModel` instance given `beta`.
 
     When a user does not want to perform inference and learning, and instead
     wants to perform nonlinear optimization directly, a `BasisFunctionModel` is
@@ -133,10 +120,7 @@ def _prepare_inference_and_learning(
     seed: int,
     epsilon: float,
 ) -> tuple[ModelNonlinearLFR, _ArgsInferenceLearning]:
-    """
-    Prepares the initial guess for the decision variables, and assembles
-    the function arguments needed for inference and learning.
-    """
+    """Prepare initial guess and function arguments for inference and learning."""
     nz = phi.nz
     ny, nx = bla.C_y.shape
     N, nu = data.time.u.shape[:2]
@@ -188,10 +172,7 @@ def _prepare_inference_and_learning(
 def _prepare_nonlin_optimization(
     data: InputOutputData, model_init: ModelNonlinearLFR, offset: int
 ) -> tuple[ModelNonlinearLFR, _ArgsNonlinOptimization]:
-    """
-    Prepares the initial guess for the decision variables, and assembles
-    the function arguments needed for nonlinear optimization.
-    """
+    """Prepare initial guess and function arguments for nonlinear optimization."""
     theta0, theta_static = eqx.partition(model_init, eqx.is_inexact_array)
 
     bla = super(ModelNonlinearLFR, model_init)
@@ -215,8 +196,7 @@ def _prepare_nonlin_optimization(
 def _compute_weighted_residual(
     Y: jnp.ndarray, Y_hat: jnp.ndarray, Lambda: jnp.ndarray
 ) -> jnp.ndarray:
-    """
-    Computes the weighted residuals between the measured and predicted outputs.
+    """Compute the weighted residuals between the measured and predicted outputs.
 
     Parameters
     ----------
@@ -226,6 +206,7 @@ def _compute_weighted_residual(
         Simulated output spectrum.
     Lambda : jnp.ndarray, shape (F, ny, ny)
         Weight matrix.
+
     """
     N, _, R = Y.shape
     return jnp.sqrt(Lambda / (R * N)) @ (Y - Y_hat)
@@ -234,7 +215,7 @@ def _compute_weighted_residual(
 def _loss_inference_and_learning(
     theta: _ThetaWZ, args: _ArgsInferenceLearning
 ) -> tuple:
-    """Implements the inference and learning method, and computes the loss."""
+    """Implement the inference and learning method and compute the loss."""
     f_full, fs, U, Y, G_yu = args.f_data
 
     A = args.theta_uy[0]
@@ -327,7 +308,7 @@ def _loss_inference_and_learning(
 def _loss_nonlin_optimization(
     theta: ModelNonlinearLFR, args: _ArgsNonlinOptimization
 ) -> tuple:
-    """Performs time-domain forward simulations, and computes the loss."""
+    """Perform time-domain forward simulations and compute the loss."""
     theta = eqx.combine(theta, args.theta_static)
 
     # Simulate the model in time domain
@@ -355,8 +336,7 @@ def inference_and_learning(
     seed: int = SEED,
     epsilon: float = EPSILON,
 ) -> ModelNonlinearLFR:
-    """
-    Performs inference and learning.
+    """Perform inference and learning.
 
     Parameters
     ----------
@@ -387,6 +367,7 @@ def inference_and_learning(
     -------
     `ModelNonlinearLFR`
         Fully initialized NL-LFR model.
+
     """
     header = " NL-LFR inference and learning  "
     print(f"{header:=^72}")
@@ -441,13 +422,10 @@ def optimize(
     data: InputOutputData,
     *,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
-    max_iter: int = MAX_ITER_NONLIN_OPTIMIZATION,
+    max_iter: int = MAX_ITER_OPTIMIZATION,
     offset: int | None = None,
 ) -> ModelNonlinearLFR:
-    """
-    Refines the parameters of an NL-LFR model by minimizing the by iteratively
-    minimizing the discrepancy between the measured and simulated output
-    spectra.
+    """Refine the parameters of an NL-LFR model using time-domain simulations.
 
     Parameters
     ----------
@@ -475,6 +453,7 @@ def optimize(
     -------
     `ModelNonlinearLFR`
         NL-LFR model with optimized parameters.
+
     """
     header = " NL-LFR optimization  "
     print(f"{header:=^72}")
@@ -500,9 +479,7 @@ def optimize(
 
 
 def construct(bla: ModelBLA, f_static: AbstractNonlinearFunction) -> ModelNonlinearLFR:
-    """
-    Constructs an NL-LFR model given the BLA and a static nonlinear
-    function object.
+    """Construct an NL-LFR model given the BLA and a static nonlinear function object.
 
     Parameters
     ----------
@@ -518,8 +495,8 @@ def construct(bla: ModelBLA, f_static: AbstractNonlinearFunction) -> ModelNonlin
     -------
     `ModelNonlinearLFR`
         NL-LFR model with (partly random) initial parameters.
-    """
 
+    """
     nw, nz = f_static.nw, f_static.nz
     ny, nu = bla.D_yu.shape
     nx = bla.A.shape[0]

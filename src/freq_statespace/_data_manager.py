@@ -1,19 +1,16 @@
-"""
-Data structures in time and frequency domains, including metadata.
-"""
+"""Data structures in time and frequency domains, including metadata."""
 
 from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
 
-from freq_statespace import bla
+from freq_statespace import _best_linear_approximation
 
 
 @dataclass(frozen=True)
 class TimeData:
-    """
-    Normalized time-domain data container.
+    """Normalized time-domain data container.
 
     Attributes
     ----------
@@ -25,7 +22,9 @@ class TimeData:
         Time vector of a single period.
     ts : float
         Sampling time in seconds.
+
     """
+
     u: jnp.ndarray
     y: jnp.ndarray
     t: np.ndarray
@@ -34,8 +33,7 @@ class TimeData:
 
 @dataclass(frozen=True)
 class NonparametricBLA:
-    """
-    Nonparametric Best Linear Approximation (BLA) and distortion levels.
+    """Nonparametric Best Linear Approximation (BLA) and distortion levels.
 
     Attributes
     ----------
@@ -46,7 +44,9 @@ class NonparametricBLA:
     var_tot : np.ndarray, shape (F, ny, nu), optional
         Estimated total variance per experiment (`R // nu`). Is `None`
         if `R // nu == 1`.
+
     """
+
     G: np.ndarray
     var_noise: np.ndarray | None
     var_tot: np.ndarray | None
@@ -54,8 +54,7 @@ class NonparametricBLA:
 
 @dataclass(frozen=True)
 class FrequencyData:
-    """
-    Normalized frequency-domain data container.
+    """Normalized frequency-domain data container.
 
     Attributes
     ----------
@@ -72,7 +71,9 @@ class FrequencyData:
         Excited frequency indices.
     fs : float
         Sampling frequency in Hz.
+
     """
+
     G_bla: NonparametricBLA
     U: jnp.ndarray
     Y: jnp.ndarray
@@ -84,8 +85,7 @@ class FrequencyData:
 
 @dataclass(frozen=True)
 class Normalizer:
-    """
-    Normalization statistics for input/output signals.
+    """Normalization statistics for input/output signals.
 
     Attributes
     ----------
@@ -97,7 +97,9 @@ class Normalizer:
         Output means.
     y_std : np.ndarray, shape (ny,)
         Output standard deviations.
+
     """
+
     u_mean: np.ndarray
     u_std: np.ndarray
     y_mean: np.ndarray
@@ -106,15 +108,16 @@ class Normalizer:
 
 @dataclass(frozen=True)
 class InputOutputData:
-    """
-    Combined time and frequency domain data.
+    """Combined time and frequency domain data.
 
     Attributes
     ----------
     time : `TimeData`
     freq : `FrequencyData`
     norm : `Normalizer`
+
     """
+
     time: TimeData
     freq: FrequencyData
     norm: Normalizer
@@ -126,9 +129,7 @@ def create_data_object(
     f_idx: np.ndarray,
     fs: float
 ) -> InputOutputData:
-    """
-    Creates InputOutputData object from time-domain signals and frequency
-    metadata.
+    """Create InputOutputData object from time-domain signals and frequency metadata.
 
     Parameters
     ----------
@@ -139,7 +140,6 @@ def create_data_object(
         - R: Number of independent phase realizations. Each realization must
              have the same frequency content and amplitude characteristics;
         - P: Number of periods (copies of the same realization).
-        
         It is fine if only a single realization and/or period is provided,
         but is is important to shape the data in the required 4D format.
     y : np.ndarray, shape (N, ny, R, P)
@@ -155,6 +155,7 @@ def create_data_object(
     -------
     InputOutputData
         Processed (meta)data in time and frequency domains.
+
     """
     # Validate dimensions
     if u.ndim != 4:
@@ -197,7 +198,7 @@ def create_data_object(
         Y_var_noise = None
 
     # Compute nonparametric BLA
-    G_bla = bla.compute_nonparametric(U[f_idx, ...], Y[f_idx, ...])
+    G_bla = _best_linear_approximation.compute_nonparametric(U[f_idx], Y[f_idx])
 
     # We proceed with data that is averaged over periods
     u_avg, y_avg = u.mean(axis=3), y.mean(axis=3)

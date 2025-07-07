@@ -1,7 +1,4 @@
-"""
-Nonlinear feature mappings (mapping `z` to `features`). All mappings are
-linear in the parameters and can hence be used for inference and learning.
-"""
+"""Nonlinear feature mappings (`z` to `features`) that are linear in the parameters."""
 
 from abc import abstractmethod
 from itertools import combinations_with_replacement
@@ -13,11 +10,12 @@ import numpy as np
 
 
 class AbstractFeatureMap(eqx.Module, strict=True):
+    """Abstract base class for feature mappings.
+
+    Subclasses must provide the attribute `nz`, and must implement the methods
+    `_compute_features` and `num_features`.
     """
-    Abstract base class for feature mappings. Subclasses must provide the
-    attribute `nz`, and must implement the methods `_compute_features` and
-    `num_features`.
-    """
+
     nz: eqx.AbstractVar[int]
 
     @abstractmethod
@@ -27,13 +25,12 @@ class AbstractFeatureMap(eqx.Module, strict=True):
 
     @abstractmethod
     def num_features(self) -> int:
-        """Returns the total number of model features."""
+        """Return the total number of model features."""
         pass
 
 
 class Polynomial(AbstractFeatureMap, strict=True):
-    """
-    Flexible polynomial feature map.
+    """Flexible polynomial feature map.
 
     Attributes
     ----------
@@ -51,7 +48,9 @@ class Polynomial(AbstractFeatureMap, strict=True):
         If `True`, includes linear terms in the polynomial features.
     tanh_clip : bool
         If `True`, applies tanh clipping to the input features.
+
     """
+
     nz: int
     degree: int
     type: str = "full"
@@ -65,7 +64,7 @@ class Polynomial(AbstractFeatureMap, strict=True):
     _combination_matrix: jnp.ndarray = eqx.field(init=False, repr=False)
 
     def __post_init__(self):
-
+        """Construct the feature architecture based on the specified parameters."""
         if self.type == 'full':
             active_degrees = range(1 if self.linear else 2, self.degree + 1)
         elif self.type == 'odd':
@@ -127,13 +126,14 @@ class Polynomial(AbstractFeatureMap, strict=True):
         return jnp.hstack((jnp.ones((N, 1)), phi_z)) if self.offset else phi_z
 
     def num_features(self) -> int:
+        """Return the total number of model features."""
         return self._num_features
 
 
 class LegendrePolynomial(AbstractFeatureMap, strict=True):
-    """
-    Legendre polynomial, which is orthogonal over the interval [-1, 1] with
-    unit weighting in the univariate case.
+    """Legendre polynomial.
+
+    Orthogonal over the interval [-1, 1] with unit weighting in the univariate case.
 
     Attributes
     ----------
@@ -145,7 +145,9 @@ class LegendrePolynomial(AbstractFeatureMap, strict=True):
         If `True`, includes a constant offset term in the features.
     tanh_clip : bool
         If `True`, applies tanh clipping to the input features.
+
     """
+
     nz: int
     degree: int
     offset: bool = True
@@ -155,6 +157,7 @@ class LegendrePolynomial(AbstractFeatureMap, strict=True):
     _num_features: int = eqx.field(init=False, repr=False)
 
     def __post_init__(self):
+        """Construct the feature architecture based on the specified parameters."""
         self._num_features = (
             self.nz * self.degree + (1 if self.offset else 0)
         )
@@ -185,13 +188,15 @@ class LegendrePolynomial(AbstractFeatureMap, strict=True):
         return phi_z if self.offset else phi_z[:, 1:]
 
     def num_features(self) -> int:
+        """Return the total number of model features."""
         return self._num_features
 
 
 class ChebyshevPolynomial(AbstractFeatureMap, strict=True):
-    """
-    Chebyshev polynomial, which is orthogonal over the interval [-1, 1] with
-    respect to a weight function that depends on the polynomial `type`.
+    """Chebyshev polynomial.
+
+    Orthogonal over the interval [-1, 1] with respect to a weight function that depends
+    on the polynomial `type`.
 
     Attributes
     ----------
@@ -207,7 +212,9 @@ class ChebyshevPolynomial(AbstractFeatureMap, strict=True):
         If `True`, includes a constant offset term in the features.
     tanh_clip : bool
         If `True`, applies tanh clipping to the input features.
+
     """
+
     nz: int
     degree: int
     type: int
@@ -218,6 +225,7 @@ class ChebyshevPolynomial(AbstractFeatureMap, strict=True):
     _num_features: int = eqx.field(init=False, repr=False)
 
     def __post_init__(self):
+        """Construct the feature architecture based on the specified parameters."""
         if self.type not in [1, 2]:
             raise ValueError('Invalid polynomial `type`. Must be `1` or `2`.')
         self._num_features = (
@@ -247,4 +255,5 @@ class ChebyshevPolynomial(AbstractFeatureMap, strict=True):
         return phi_z if self.offset else phi_z[:, 1:]
 
     def num_features(self) -> int:
+        """Return the total number of model features."""
         return self._num_features

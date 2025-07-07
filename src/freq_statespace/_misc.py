@@ -1,21 +1,16 @@
-"""
-Miscellaneous utility functions.
-"""
+"""Miscellaneous utility functions."""
 
 import jax
 import nonlinear_benchmarks
 import numpy as np
 
 from freq_statespace._data_manager import InputOutputData, create_data_object
-from freq_statespace._model_structure import ModelBLA, ModelNonlinearLFR
+from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
 from freq_statespace._solve import SolveResult
 
 
 def load_and_preprocess_silverbox_data() -> InputOutputData:
-    """
-    Loads (from `nonlinear_benchmarks`) and preprocesses the Silverbox dataset.
-    """
-
+    """Load (from `nonlinear_benchmarks`) and preprocesses the Silverbox dataset."""
     # Load data
     train = nonlinear_benchmarks.Silverbox()[0]
     u, y = train.u, train.y
@@ -65,9 +60,7 @@ def evaluate_model_performance(
     solve_result: SolveResult | None = None,
     offset: int | None = None,
 ) -> None:
-    """
-    Simulates model and prints NRMSE per output channel, along with solver
-    timings (if provided).
+    """Simulate model and prints NRMSEs, along with solver timings (if provided).
 
     Parameters
     ----------
@@ -86,6 +79,7 @@ def evaluate_model_performance(
         are prepended accordingly.  If `offset` is not specified, two entire
         periods are simulated from zero initial state. The first period is
         then discarded when computing the NRMSE.
+
     """
     if not isinstance(model, ModelBLA | ModelNonlinearLFR):
         raise TypeError("`model` must be either `ModelBLA` or `ModelNonlinearLFR`.")

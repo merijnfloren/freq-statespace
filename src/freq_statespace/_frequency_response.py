@@ -1,13 +1,10 @@
-"""
-Frequency response analysis for multi-input multi-output systems.
-"""
+"""Frequency response analysis for multi-input multi-output systems."""
 
 import numpy as np
 
 
 def compute_frequency_response(U: np.ndarray, Y: np.ndarray) -> np.ndarray:
-    """
-    Computes frequency response matrix G(k) = Y(k) * (U(k))^(-1).
+    """Compute frequency response matrix G(k) = Y(k) * (U(k))^(-1).
 
     Parameters
     ----------
@@ -27,6 +24,7 @@ def compute_frequency_response(U: np.ndarray, Y: np.ndarray) -> np.ndarray:
         - nu: number of inputs;
         - M: number of experiments (R // nu);
         - P: number of periods.
+
     """
     F, nu, R, P = U.shape
     ny = Y.shape[1]

@@ -1,6 +1,4 @@
-"""
-General static nonlinear function mappings (mapping `z` to `w`).
-"""
+"""General static nonlinear function mappings (mapping `z` to `w`)."""
 
 from abc import abstractmethod
 from collections.abc import Callable
@@ -11,12 +9,12 @@ import jax.numpy as jnp
 
 from freq_statespace import _misc
 from freq_statespace._config import SEED
-from freq_statespace.feature_map import AbstractFeatureMap
+from freq_statespace.f_static._feature_maps import AbstractFeatureMap
 
 
 class AbstractNonlinearFunction(eqx.Module, strict=True):
-    """
-    Abstract base class for nonlinear function mappings.
+    """Abstract base class for nonlinear function mappings.
+
     Subclasses must provide the attributes `nw`, `nz` and `seed`,
     and must implement the methods `_evaluate` and `num_parameters`.
     """
@@ -32,13 +30,12 @@ class AbstractNonlinearFunction(eqx.Module, strict=True):
 
     @abstractmethod
     def num_parameters(self) -> int:
-        """Returns the total number of model parameters."""
+        """Return the total number of model parameters."""
         pass
 
 
 class BasisFunctionModel(AbstractNonlinearFunction, strict=True):
-    """
-    Static nonlinear function based on an `AbstractFeatureMap`.
+    """Static nonlinear function based on an `AbstractFeatureMap`.
 
     Attributes
     ----------
@@ -51,6 +48,7 @@ class BasisFunctionModel(AbstractNonlinearFunction, strict=True):
         1. Nonlinear coefficient matrix `beta`;
         2. The matrices `B_w`, `C_z`, `D_yw`, and `D_zu` (initialized
            externally, not by this class).
+
     """
 
     nw: int
@@ -63,6 +61,7 @@ class BasisFunctionModel(AbstractNonlinearFunction, strict=True):
     _num_parameters: int = eqx.field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Parametrize `beta` given random seed."""
         key = _misc.get_key(self.seed, "nonlin_funcs")
         self.beta = jax.random.uniform(
             key, shape=(self.phi.num_features(), self.nw), minval=-1, maxval=1
@@ -74,12 +73,12 @@ class BasisFunctionModel(AbstractNonlinearFunction, strict=True):
         return self.phi._compute_features(z) @ self.beta
 
     def num_parameters(self) -> int:
+        """Return the size of `beta`."""
         return self._num_parameters
 
 
 class NeuralNetwork(AbstractNonlinearFunction, strict=True):
-    """
-    Fully connected feedforward neural network.
+    """Fully connected feedforward neural network.
 
     Attributes
     ----------
@@ -100,6 +99,7 @@ class NeuralNetwork(AbstractNonlinearFunction, strict=True):
            externally, not by this class).
     bias : bool
         Whether to include bias terms in each layer.
+
     """
 
     nz: int = eqx.field(repr=False)
@@ -115,6 +115,7 @@ class NeuralNetwork(AbstractNonlinearFunction, strict=True):
     _num_parameters: int = eqx.field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Parametrize neural network given random seed."""
         key = _misc.get_key(self.seed, "nonlin_funcs")
         self.model = eqx.nn.MLP(
             in_size=self.nz,
@@ -135,4 +136,5 @@ class NeuralNetwork(AbstractNonlinearFunction, strict=True):
         return jax.vmap(self.model)(z)
 
     def num_parameters(self) -> int:
+        """Return the number of neural network parameters."""
         return self._num_parameters
