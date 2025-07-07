@@ -5,7 +5,6 @@ import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
 
-from dep import fsid
 from freq_statespace import _misc
 from freq_statespace._config import SOLVER
 from freq_statespace._data_manager import (
@@ -16,6 +15,7 @@ from freq_statespace._data_manager import (
 from freq_statespace._frequency_response import compute_frequency_response
 from freq_statespace._model_structures import ModelBLA
 from freq_statespace._solve import solve
+from freq_statespace.dep import fsid
 
 
 MAX_ITER = 1000

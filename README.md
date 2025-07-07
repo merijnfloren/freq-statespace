@@ -43,7 +43,7 @@ It is also possible to skip the inference and learning step and go straight to n
 pip install freq-statespace
 ```
 
-If JAX isn't already installed in your environment, this will install the CPU-only version. For GPU/TPU support (strongly recommended, often many times faster), follow the [JAX installation guide](https://github.com/google/jax#installation).
+If JAX isn't already installed in your environment, this will install the CPU-only version. For GPU/TPU support (strongly recommended, often many times faster for mid-size to large problems), follow the [JAX installation guide](https://github.com/google/jax#installation).
 
 ## Quick example
 
