@@ -5,7 +5,7 @@ description = "Frequency-domain (nonlinear) state-space identification using JAX
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
-license-files = ["LICENSE*"]
+license-files = ["LICEN[CS]E*"]
 authors = [
   {name = "Merijn Floren", email = "merijn.floren@gmail.com"}
 ]

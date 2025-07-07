@@ -3,7 +3,7 @@ A flexible [JAX](https://docs.jax.dev/en/latest/index.html)-based package for no
 
 It’s built around the **nonlinear Linear Fractional Representation (NL-LFR)** model structure, a powerful block-oriented framework that connects an LTI system with a static feedback nonlinearity. This internal feedback setup is key to capturing complex behaviors found in many real-world systems.
 <div align="center">
-  <img src="model_structure.svg" width="500px" />
+  <img src="https://github.com/merijnfloren/freq-statespace/raw/main/model_structure.svg" width="500px" />
 </div>
 
 ### Basic usage
