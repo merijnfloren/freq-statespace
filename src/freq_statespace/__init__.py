@@ -19,7 +19,7 @@ Available submodules and components:
 from . import _best_linear_approximation as lin
 from . import _nonlin_lfr as nonlin
 from . import f_static
-from ._data_manager import Normalizer, create_data_object
+from ._data_manager import create_data_object
 from ._misc import load_and_preprocess_silverbox_data
 from ._model_structures import ModelBLA, ModelNonlinearLFR
 
@@ -30,7 +30,6 @@ __all__ = [
     "f_static",
     "load_and_preprocess_silverbox_data",
     "create_data_object",
-    "Normalizer",
     "ModelBLA",
-    "ModelNonlinearLFR",
+    "ModelNonlinearLFR"
 ]
