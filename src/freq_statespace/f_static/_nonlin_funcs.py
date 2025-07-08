@@ -111,7 +111,7 @@ class NeuralNetwork(AbstractNonlinearFunction, strict=True):
     bias: bool = eqx.field(default=True, repr=False)
 
     # Post-init attributes
-    model: eqx.nn.MLP = eqx.field(init=False)
+    model: tuple = eqx.field(init=False)
     _num_parameters: int = eqx.field(init=False, repr=False)
 
     def __post_init__(self) -> None:
