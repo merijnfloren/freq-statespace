@@ -13,7 +13,7 @@ class AbstractFeatureMap(eqx.Module, strict=True):
     """Abstract base class for feature mappings.
 
     Subclasses must provide the attribute `nz`, and must implement the methods
-    `_compute_features` and `num_features`.
+    `_compute_features()` and `num_features()`.
     """
 
     nz: eqx.AbstractVar[int]
@@ -47,7 +47,7 @@ class Polynomial(AbstractFeatureMap, strict=True):
     linear : bool
         If `True`, includes linear terms in the polynomial features.
     tanh_clip : bool
-        If `True`, applies tanh clipping to the input features.
+        If `True`, applies `tanh` clipping to the input features.
 
     """
 
@@ -144,7 +144,7 @@ class LegendrePolynomial(AbstractFeatureMap, strict=True):
     offset : bool
         If `True`, includes a constant offset term in the features.
     tanh_clip : bool
-        If `True`, applies tanh clipping to the input features.
+        If `True`, applies `tanh` clipping to the input features.
 
     """
 
@@ -211,7 +211,7 @@ class ChebyshevPolynomial(AbstractFeatureMap, strict=True):
     offset : bool
         If `True`, includes a constant offset term in the features.
     tanh_clip : bool
-        If `True`, applies tanh clipping to the input features.
+        If `True`, applies `tanh` clipping to the input features.
 
     """
 

@@ -16,7 +16,7 @@ class AbstractNonlinearFunction(eqx.Module, strict=True):
     """Abstract base class for nonlinear function mappings.
 
     Subclasses must provide the attributes `nw`, `nz` and `seed`,
-    and must implement the methods `_evaluate` and `num_parameters`.
+    and must implement the methods `_evaluate()` and `num_parameters()`.
     """
 
     nw: eqx.AbstractVar[int]
