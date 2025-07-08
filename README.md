@@ -83,7 +83,7 @@ import jax
 # Step 2: Nonlinear optimization
 nw, nz = 1, 1  # internal signal dimensions
 neural_net = fss.f_static.NeuralNetwork(
-    nw=w, nz=nz, num_layers=1, num_neurons_per_layer=10, activation=jax.nn.relu
+    nw=nw, nz=nz, num_layers=1, num_neurons_per_layer=10, activation=jax.nn.relu
 )
 nllfr = fss.nonlin.construct(bla, neural_net)
 nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.54%, 100 iters, 356ms/iter
