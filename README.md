@@ -34,8 +34,8 @@ It is also possible to skip the inference and learning step and go straight to n
 ### Features
 - Provides two workflows for identifying nonlinear LFR state-space models by primarily exploiting a frequency-domain formulation that enables inherent parallelism.
 - Leverages JAX for automatic differentiation, JIT compilation, and GPU/TPU acceleration.
-- Supports [Optimistix](https://docs.kidger.site/optimistix/) solvers (Levenberg–Marquardt, BFGS, ...) for structured system identification problems.
-- Supports [Optax](https://optax.readthedocs.io/en/latest/) optimizers (Adam, SGD, ...) for large-scale or stochastic optimization.
+- Supports [Optimistix](https://docs.kidger.site/optimistix/) solvers (Levenberg–Marquardt, BFGS, ...) for typical system identification problems.
+- Supports [Optax](https://optax.readthedocs.io/en/latest/) optimizers (Adam, SGD, ...) for large-scale optimization.
 
 ## Installation
 
