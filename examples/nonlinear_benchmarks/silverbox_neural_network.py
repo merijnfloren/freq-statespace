@@ -17,5 +17,6 @@ bla = fss.lin.optimize(bla, data)  # NRMSE 13.17%, 6 iters, 1.67ms/iter
 neural_net = fss.f_static.NeuralNetwork(
     nw=1, nz=1, num_layers=1, num_neurons_per_layer=10, activation=jax.nn.relu
 )
+
 nllfr = fss.nonlin.construct(bla, neural_net)
 nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.54%, 100 iters, 356ms/iter
