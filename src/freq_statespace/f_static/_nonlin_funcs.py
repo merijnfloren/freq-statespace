@@ -56,8 +56,8 @@ class BasisFunctionModel(AbstractNonlinearFunction):
     ) -> None:
         """Initialize a static nonlinear basis-function model.
 
-        Arguments
-        ---------
+        Parameters
+        ----------
         nw : int
             Number of output features (dimension of latent signal `w`).
         phi : AbstractFeatureMap
@@ -116,8 +116,8 @@ class NeuralNetwork(AbstractNonlinearFunction):
     ) -> None:
         """Initialize a fully connected feedforward neural network.
 
-        Arguments
-        ---------
+        Parameters
+        ----------
         nz : int
             Number of input features (dimension of latent signal `z`).
         nw : int

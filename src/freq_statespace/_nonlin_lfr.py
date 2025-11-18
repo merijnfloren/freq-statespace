@@ -9,7 +9,7 @@ import numpy as np
 import optimistix as optx
 
 from freq_statespace import _misc
-from freq_statespace._config import SEED, SOLVER
+from freq_statespace._config import PRINT_EVERY, SEED, SOLVER
 from freq_statespace._data_manager import FrequencyData, InputOutputData
 from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
 from freq_statespace._solve import solve
@@ -333,6 +333,7 @@ def inference_and_learning(
     fixed_point_iters: int,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
     max_iter: int = MAX_ITER_INFERENCE_AND_LEARNING,
+    print_every: int = PRINT_EVERY,
     seed: int = SEED,
     epsilon: float = EPSILON,
 ) -> ModelNonlinearLFR:
@@ -358,6 +359,9 @@ def inference_and_learning(
         Optimistix or Optax libraries.
     max_iter : int
         Maximum number of optimization iterations.
+    print_every : int
+        Frequency of printing iteration information. If set to 0, no
+        information is printed.
     seed : int
         Random seed for parameter initialization.
     epsilon : float
@@ -379,8 +383,11 @@ def inference_and_learning(
 
     # Optimize the model parameters
     print("Starting iterative optimization...")
-    print(f"    BLA loss: {bla_loss:.4e}")
-    solve_result = solve(theta0, solver, args, _loss_inference_and_learning, max_iter)
+    if print_every > 0:
+        print(f"    BLA loss: {bla_loss:.4e}")
+    solve_result = solve(
+        theta0, solver, args, _loss_inference_and_learning, max_iter, print_every
+    )
 
     aux = solve_result.aux
     scalar_loss = aux[0]
@@ -423,6 +430,7 @@ def optimize(
     *,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
     max_iter: int = MAX_ITER_OPTIMIZATION,
+    print_every: int = PRINT_EVERY,
     offset: int | None = None,
 ) -> ModelNonlinearLFR:
     """Refine the parameters of an NL-LFR model using time-domain simulations.
@@ -438,6 +446,9 @@ def optimize(
         Optimistix or Optax libraries.
     max_iter : int
         Maximum number of optimization iterations.
+    print_every : int
+        Frequency of printing iteration information. If set to 0, no
+        information is printed.
     offset : int, optional
         A non-negative integer `≤ N`. This value is used to select
         the unknown initial state of the time-domain simulations. Specifically,
@@ -466,8 +477,11 @@ def optimize(
     bla_loss = _compute_bla_loss(super(ModelNonlinearLFR, model), data)
 
     print("Starting iterative optimization...")
-    print(f"    BLA loss: {bla_loss:.4e}")
-    solve_result = solve(theta0, solver, args, _loss_nonlin_optimization, max_iter)
+    if print_every > 0:
+        print(f"    BLA loss: {bla_loss:.4e}")
+    solve_result = solve(
+        theta0, solver, args, _loss_nonlin_optimization, max_iter, print_every
+    )
 
     model = eqx.combine(solve_result.theta, args.theta_static)
 

@@ -51,7 +51,8 @@ def solve(
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser,
     args: PyTree[Any],
     loss_fn: Fn,
-    max_iter: int
+    max_iter: int,
+    print_every: int
 ) -> SolveResult:
     """Solve an optimization problem using a JAX-compatible Optimistix solver.
 
@@ -71,7 +72,10 @@ def solve(
         Objective function to be minimized. Must return a tuple: (loss, aux).
     max_iter : int
         Maximum number of iterations allowed before termination.
-
+    print_every : int
+        Frequency of printing iteration information. If set to 0, no
+        information is printed.
+        
     Returns
     -------
     SolveResult
@@ -96,14 +100,14 @@ def solve(
 
     # JIT compile step and terminate
     step = eqx.filter_jit(
-        eqx.Partial(solver.step, fn=loss_fn, args=args, options=options, tags=tags)  # noqa: E501
+        eqx.Partial(solver.step, fn=loss_fn, args=args, options=options, tags=tags)
     )
     terminate = eqx.filter_jit(
-        eqx.Partial(solver.terminate, fn=loss_fn, args=args, options=options, tags=tags)  # noqa: E501
+        eqx.Partial(solver.terminate, fn=loss_fn, args=args, options=options, tags=tags)
     )
 
     # Initial state
-    state = solver.init(loss_fn, theta_init, args, options, f_struct, aux_struct, tags)  # noqa: E501
+    state = solver.init(loss_fn, theta_init, args, options, f_struct, aux_struct, tags)
     converged = terminate(y=theta_init, state=state)[0]
 
     iter_count = 0
@@ -122,7 +126,8 @@ def solve(
         iter_end = time.perf_counter()
 
         scalar_loss = aux[0]
-        jax.debug.print("    Iter {0} | loss = {1:.4e}", iter_count + 1, scalar_loss)  # noqa: E501
+        if print_every > 0 and (iter_count % print_every == 0):
+            jax.debug.print("    Iter {0} | loss = {1:.4e}", iter_count + 1, scalar_loss)  # noqa: E501
 
         loss_history[iter_count] = scalar_loss
         iter_times[iter_count] = iter_end - iter_start

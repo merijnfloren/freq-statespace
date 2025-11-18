@@ -6,7 +6,7 @@ import numpy as np
 import optimistix as optx
 
 from freq_statespace import _misc
-from freq_statespace._config import SOLVER
+from freq_statespace._config import PRINT_EVERY, SOLVER
 from freq_statespace._data_manager import (
     FrequencyData,
     InputOutputData,
@@ -194,6 +194,7 @@ def optimize(
     *,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
     max_iter: int = MAX_ITER,
+    print_every: int = PRINT_EVERY
 ) -> ModelBLA:
     """Refine the parameters of the BLA using frequency-response computations.
 
@@ -208,6 +209,9 @@ def optimize(
         Optimistix or Optax libraries.
     max_iter : int
         Maximum number of optimization iterations.
+    print_every : int
+        Frequency of printing iteration information. If set to 0, no
+        information is printed.
 
     Returns
     -------
@@ -235,7 +239,9 @@ def optimize(
 
     # Optimize the model parameters
     print("Starting iterative optimization...")
-    solve_result = solve(theta0_dyn, solver, args, _compute_weighted_residual, max_iter)
+    solve_result = solve(
+        theta0_dyn, solver, args, _compute_weighted_residual, max_iter, print_every
+    )
 
     model = eqx.combine(solve_result.theta, theta_static)
     model = _normalize_states(model, freq)

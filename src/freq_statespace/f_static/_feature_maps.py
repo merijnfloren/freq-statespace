@@ -58,8 +58,8 @@ class Polynomial(AbstractFeatureMap, strict=True):
     ) -> None:
         """Initialize a flexible polynomial feature map.
 
-        Arguments
-        ---------
+        Parameters
+        ----------
         nz : int
             Number of input features (dimension of latent signal `z`).
         degree : int
@@ -170,8 +170,8 @@ class LegendrePolynomial(AbstractFeatureMap, strict=True):
     ) -> None:
         """Initialize a Legendre polynomial feature map.
 
-        Arguments
-        ---------
+        Parameters
+        ----------
         nz : int
             Number of input features (dimension of latent signal `z`).
         degree : int
@@ -241,8 +241,8 @@ class ChebyshevPolynomial(AbstractFeatureMap, strict=True):
     ) -> None:
         """Initialize a Chebyshev polynomial feature map.
 
-        Arguments
-        ---------
+        Parameters
+        ----------
         nz : int
             Number of input features (dimension of latent signal `z`).
         degree : int
