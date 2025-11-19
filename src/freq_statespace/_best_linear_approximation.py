@@ -41,13 +41,9 @@ def _normalize_states(model: ModelBLA, freq: FrequencyData) -> ModelBLA:
 
     f_data = freq.f
 
-    G_xu = ModelBLA(  # note that this is not really the BLA
-        A=model.A,
-        B_u=model.B_u,  # usual state dynamics
-        C_y=np.eye(nx),
-        D_yu=np.zeros((nx, nu)),  # full-state output
-        ts=model.ts,
-        norm=model.norm,
+    G_xu = ModelBLA(  # parametric u->x frequency response; not the true BLA
+        A=model.A, B_u=model.B_u, C_y=np.eye(nx), D_yu=np.zeros((nx, nu)), 
+        ts=model.ts, norm=model.norm,
     )._frequency_response(f_data)
 
     X = G_xu @ freq.U
@@ -59,12 +55,9 @@ def _normalize_states(model: ModelBLA, freq: FrequencyData) -> ModelBLA:
 
     # Apply similarity transformation: x_norm = Tx_inv * x
     return ModelBLA(
-        A=Tx_inv @ model.A @ Tx,
-        B_u=Tx_inv @ model.B_u,
-        C_y=model.C_y @ Tx,
-        D_yu=model.D_yu,
-        ts=model.ts,
-        norm=model.norm,
+        A=Tx_inv @ model.A @ Tx, B_u=Tx_inv @ model.B_u,
+        C_y=model.C_y @ Tx, D_yu=model.D_yu,
+        ts=model.ts, norm=model.norm,
     )
 
 
@@ -134,8 +127,7 @@ def subspace_id(
         Subspace dimensioning parameter, must be greater than `nx`. Defaults to
         `nx + 1` if not provided.
     logging_enabled : bool
-        Whether to print a summary of the identification results. Defaults to
-        `True`.
+        Whether to print a summary of the identification results. Defaults to `True`.
 
     Returns
     -------
@@ -161,7 +153,6 @@ def subspace_id(
     freq = data.freq
     f_data = freq.f[freq.f_idx]
     fs = freq.fs
-    ts = 1 / fs
     z = 2 * np.pi * f_data / fs
 
     G_bla = freq.G_bla
@@ -176,7 +167,7 @@ def subspace_id(
     if G_bla.var_tot is not None:
         W_temp = 1 / G_bla.var_tot
 
-        # The steps below are to make it compatible with fsid.gfdsid
+        # The four lines below are to ensure compatibility with fsid.gfdsid
         W_temp = np.transpose(np.sqrt(W_temp), (0, 2, 1)).reshape(nu * F, ny)
         W = np.zeros((nu * F, ny, ny))
         for k in range(nu * F):
@@ -189,11 +180,11 @@ def subspace_id(
     Y = np.asarray(Y, dtype=np.complex128)
     U = np.asarray(U, dtype=np.complex128)
 
-    # Perform frequency subspace identification
+    # Perform frequency-domain subspace identification
     fddata = (zj, Y, U)
     A, B_u, C_y, D_yu = fsid.gfdsid(fddata=fddata, n=nx, q=nq, estTrans=False, w=W)[:4]
 
-    model = ModelBLA(A, B_u, C_y, D_yu, ts, data.norm)
+    model = ModelBLA(A, B_u, C_y, D_yu, 1 / fs, data.norm)
 
     if logging_enabled:
         _misc.evaluate_model_performance(model, data)

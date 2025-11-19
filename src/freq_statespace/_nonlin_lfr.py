@@ -142,7 +142,7 @@ def _prepare_inference_and_learning(
     theta_uy = (bla.A, bla.B_u, bla.C_y)
 
     # Compute z_star normalization
-    G_zu = ModelBLA(  # note that this is not really the BLA
+    G_zu = ModelBLA(  # parametric u->z frequency response; not the true BLA
         A=bla.A, B_u=bla.B_u, C_y=C_z_star, D_yu=D_zu_star, ts=bla.ts, norm=bla.norm
     )._frequency_response(f_full)
 
