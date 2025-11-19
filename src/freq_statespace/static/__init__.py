@@ -1,4 +1,4 @@
-"""Submodule `f_static`.
+"""Submodule `static`.
 
 This submodule provides the building blocks for the static nonlinear function.
 

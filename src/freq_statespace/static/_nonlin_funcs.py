@@ -9,7 +9,7 @@ import jax.numpy as jnp
 
 from freq_statespace import _misc
 from freq_statespace._config import SEED
-from freq_statespace.f_static._feature_maps import AbstractFeatureMap
+from freq_statespace.static._feature_maps import AbstractFeatureMap
 
 
 class AbstractNonlinearFunction(eqx.Module):

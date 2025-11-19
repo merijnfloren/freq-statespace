@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from freq_statespace._data_manager import Normalizer
-from freq_statespace.f_static._nonlin_funcs import AbstractNonlinearFunction
+from freq_statespace.static._nonlin_funcs import AbstractNonlinearFunction
 
 
 class ModelBLA(eqx.Module):
@@ -223,7 +223,7 @@ class ModelNonlinearLFR(ModelBLA):
     C_z : jnp.ndarray, shape (nz, nx)
     D_yw : jnp.ndarray, shape (ny, nw)
     D_zu : jnp.ndarray, shape (nz, nu)
-    f_static : `AbstractNonlinearFunction`
+    func_static : `AbstractNonlinearFunction`
         Static nonlinear function mapping `z` to `w`.
 
     """
@@ -232,7 +232,7 @@ class ModelNonlinearLFR(ModelBLA):
     C_z: jnp.ndarray = eqx.field(converter=jnp.asarray)
     D_yw: jnp.ndarray = eqx.field(converter=jnp.asarray)
     D_zu: jnp.ndarray = eqx.field(converter=jnp.asarray)
-    f_static: AbstractNonlinearFunction
+    func_static: AbstractNonlinearFunction
 
     def _simulate(
         self, u: np.ndarray, *, offset: int = 0, x0: np.ndarray | None = None
@@ -282,7 +282,7 @@ class ModelNonlinearLFR(ModelBLA):
 
             # Model equations
             Z = self.C_z @ X + self.D_zu @ U
-            W = self.f_static._evaluate(Z.T).T
+            W = self.func_static._evaluate(Z.T).T
             X_next = self.A @ X + self.B_u @ U + self.B_w @ W
             Y = self.C_y @ X + self.D_yu @ U + self.D_yw @ W
             return (
@@ -394,10 +394,6 @@ class ModelNonlinearLFR(ModelBLA):
     def num_parameters(self) -> int:
         """Return the total number of model parameters."""
         return (
-            self.B_w.size
-            + self.C_z.size
-            + self.D_yw.size
-            + self.D_zu.size
-            + super().num_parameters()
-            + self.f_static.num_parameters()
+            self.B_w.size + self.C_z.size + self.D_yw.size + self.D_zu.size
+            + super().num_parameters() + self.func_static.num_parameters
         )

@@ -19,7 +19,7 @@ bla = fss.lin.subspace_id(data, nx)  # NRMSE 18.36%, non-iterative
 bla = fss.lin.optimize(bla, data)  # NRMSE 13.17%, 6 iters, 1.97ms/iter
 
 # Step 2: Inference and learning
-phi = fss.f_static.basis.Polynomial(nz=1, degree=3)
+phi = fss.static.basis.Polynomial(nz=1, degree=3)
 nllfr = fss.nonlin.inference_and_learning(
     bla, data, phi=phi, nw=1)  # NRMSE 1.11%, 42 iters, 13.2ms/iter
 

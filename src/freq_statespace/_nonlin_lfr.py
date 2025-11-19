@@ -13,8 +13,8 @@ from freq_statespace._config import PRINT_EVERY, SEED, SOLVER
 from freq_statespace._data_manager import FrequencyData, InputOutputData
 from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
 from freq_statespace._solve import solve
-from freq_statespace.f_static._feature_maps import AbstractFeatureMap
-from freq_statespace.f_static._nonlin_funcs import (
+from freq_statespace.static._feature_maps import AbstractFeatureMap
+from freq_statespace.static._nonlin_funcs import (
     AbstractNonlinearFunction,
     BasisFunctionModel,
 )
@@ -407,7 +407,7 @@ def inference_and_learning(
         C_z=args.Tz_inv @ solve_result.theta.C_z_star,
         D_yw=solve_result.theta.D_yw_star,
         D_zu=args.Tz_inv @ solve_result.theta.D_zu_star,
-        f_static=_create_basis_function_model_given_beta(nw, phi, beta),
+        func_static=_create_basis_function_model_given_beta(nw, phi, beta),
         ts=data.time.ts,
         norm=bla.norm,
     )
@@ -505,7 +505,7 @@ def optimize(
 
 def connect(
     bla: ModelBLA,
-    f_static: AbstractNonlinearFunction,
+    func_static: AbstractNonlinearFunction,
     sigma: float = 1e-4
 ) -> ModelNonlinearLFR:
     """Construct an NL-LFR model given the BLA and a static nonlinear function object.
@@ -514,10 +514,10 @@ def connect(
     ----------
     bla : `ModelBLA`
         Parametric BLA model.
-    f_static : `AbstractNonlinearFunction`
+    func_static : `AbstractNonlinearFunction`
         Nonlinear function object that defines the static relation between
         the latent signals `z` and `w`. Note that the `seed` attribute of
-        `f_static` is used to randomly initialize the matrices `B_w`, `C_z`,
+        `func_static` is used to randomly initialize the matrices `B_w`, `C_z`,
         `D_yw`, and `D_zu`.
     sigma : float
         Scaling factor for the random initialization of `B_w` and `D_yw`. Defaults
@@ -530,11 +530,11 @@ def connect(
         NL-LFR model with (partly random) initial parameters.
 
     """
-    nw, nz = f_static.nw, f_static.nz
+    nw, nz = func_static.nw, func_static.nz
     ny, nu = bla.D_yu.shape
     nx = bla.A.shape[0]
 
-    key = _misc.get_key(f_static.seed, "nonlin_lfr")
+    key = _misc.get_key(func_static.seed, "nonlin_lfr")
 
     key_B_w, key_C_z, key_D_yw, key_D_zu = jax.random.split(key, 4)
 
@@ -558,7 +558,7 @@ def connect(
         C_z=C_z,
         D_yw=D_yw,
         D_zu=D_zu,
-        f_static=f_static,
+        func_static=func_static,
         ts=bla.ts,
         norm=bla.norm,
     )

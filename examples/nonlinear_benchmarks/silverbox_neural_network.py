@@ -13,7 +13,7 @@ bla = fss.lin.subspace_id(data, nx)  # NRMSE 18.36%, non-iterative
 bla = fss.lin.optimize(bla, data)  # NRMSE 13.17%, 6 iters, 1.67ms/iter
 
 # Step 2: Nonlinear optimization
-neural_net = fss.f_static.NeuralNetwork(
+neural_net = fss.static.NeuralNetwork(
     nw=1, nz=1, num_layers=1, num_neurons_per_layer=10, activation=jax.nn.relu
 )
 

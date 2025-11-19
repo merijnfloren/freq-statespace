@@ -1,24 +1,27 @@
-"""Top-level `freq_statespace` package.
+"""Top-level package for frequency-domain system identification.
 
-This module exposes the main model structures, static nonlinear building blocks,
-data utilities, and example preprocessing functions for frequency-domain system
-identification.
+The API is structured around three main namespaces:
 
-Available submodules and components:
-- `create_data_object`: Utility function to initialize the identification process by
-   constructing an `InputOutputData` object.
-- `lin`: Tools for creating and optimizing linear BLA models.
-- `nonlin`: Tools for creating and optimizing nonlinear LFR models;
-- `f_static`: Static nonlinear function approximators and feature maps;
-- `ModelBLA`, `ModelNonlinearLFR`: Primary model structure classes;
-- `load_and_preprocess_silverbox_data`: Example dataset loading and preprocessing.
+- ``lin``:
+    Tools for creating and optimizing BLA models.
 
+- ``nonlin``:
+    Tools for creating and optimizing nonlinear LFR models.
+
+- ``static``:
+    Static nonlinear function approximators and feature-map constructions.
+
+Additional components:
+- ``create_data_object`` for constructing ``InputOutputData`` objects, the starting
+    point for all identification routines.
+- ``ModelBLA`` and ``ModelNonlinearLFR`` as the core model classes.
+- ``load_and_preprocess_silverbox_data`` for loading the Silverbox example dataset.
 """
 
 
 from . import _best_linear_approximation as lin
 from . import _nonlin_lfr as nonlin
-from . import f_static
+from . import static
 from ._data_manager import create_data_object
 from ._misc import load_and_preprocess_silverbox_data
 from ._model_structures import ModelBLA, ModelNonlinearLFR
@@ -27,7 +30,7 @@ from ._model_structures import ModelBLA, ModelNonlinearLFR
 __all__ = [
     "lin",
     "nonlin",
-    "f_static",
+    "static",
     "load_and_preprocess_silverbox_data",
     "create_data_object",
     "ModelBLA",
