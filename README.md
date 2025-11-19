@@ -21,7 +21,7 @@ consisting of linear state-space matrices and a static nonlinear function approx
 
 A typical step-wise identification procedure is as follows:
 
-1. **Best Linear Approximation (BLA) estimation**.
+1. **Best Linear Approximation (BLA) parametrisation**.
    Initializes the matrices $A$, $B_u$, $C_y$ and $D_{yu}$ using the [frequency-domain subspace method](https://github.com/tomasmckelvey/fsid), and refines these estimates through iterative optimization. If you're only interested in linear state-space models, you can stop the identification process here.
 
 2. **NL-LFR initialization**.
@@ -32,7 +32,7 @@ A typical step-wise identification procedure is as follows:
 It is also possible to skip the inference and learning step and go straight to nonlinear optimization. An advantage of this approach is that it puts no restriction on the structure of $f(\cdot)$, i.e., it does not require a model that is linear in the parameters.
 
 ### Features
-- Provides a user-friendly interface for identifying linear state-space models using frequency-domain subspace estimation based on the BLA.
+- Provides a user-friendly interface for identifying linear state-space models using frequency-domain subspace estimation based on the nonparametric BLA.
 - Offers two workflows for identifying nonlinear LFR state-space models by primarily exploiting a frequency-domain formulation that enables inherent parallelism.
 - Leverages JAX for automatic differentiation, JIT compilation, and GPU/TPU acceleration.
 - Supports [Optimistix](https://docs.kidger.site/optimistix/) solvers (Levenberg–Marquardt, BFGS, ...) for typical system identification problems.
