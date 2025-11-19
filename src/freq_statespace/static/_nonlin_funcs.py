@@ -139,7 +139,7 @@ class NeuralNetwork(AbstractNonlinearFunction):
         self.nz = nz
         self.nw = nw
         self.layers = layers
-        self.num_neurons_per_layer = neurons_per_layer
+        self.neurons_per_layer = neurons_per_layer
         self.activation = activation
         self.seed = seed
         self.bias = bias
@@ -147,7 +147,7 @@ class NeuralNetwork(AbstractNonlinearFunction):
         self.model = eqx.nn.MLP(
             in_size=self.nz,
             out_size=self.nw,
-            width_size=self.num_neurons_per_layer,
+            width_size=self.neurons_per_layer,
             depth=self.layers,
             activation=self.activation,
             use_bias=self.bias,

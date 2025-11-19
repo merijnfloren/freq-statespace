@@ -6,7 +6,7 @@ import numpy as np
 import optimistix as optx
 
 from freq_statespace import _misc
-from freq_statespace._config import PRINT_EVERY, SOLVER
+from freq_statespace._config import PRINT_EVERY, SOLVER, DeviceLike
 from freq_statespace._data_manager import (
     FrequencyData,
     InputOutputData,
@@ -198,7 +198,8 @@ def optimize(
     *,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
     max_iter: int = MAX_ITER,
-    print_every: int = PRINT_EVERY
+    print_every: int = PRINT_EVERY,
+    device: DeviceLike = None,
 ) -> ModelBLA:
     """Refine the parameters of the BLA using frequency-response computations.
 
@@ -217,7 +218,11 @@ def optimize(
         Frequency of printing iteration information. If set to 0, only a
         summary is printed. If set to -1, no printing is done. Defaults to
         `PRINT_EVERY`.
-
+    device : `DeviceLike`, optional
+        Device on which to perform the computations. Can be either a device
+        name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
+        provided, the default JAX device is used.
+        
     Returns
     -------
     `ModelBLA`
@@ -249,7 +254,8 @@ def optimize(
     if logging_enabled:
         print("Starting iterative optimization...")
     solve_result = solve(
-        theta0_dyn, solver, args, _compute_weighted_residual, max_iter, print_every
+        theta0_dyn, solver, args, _compute_weighted_residual,
+        max_iter, print_every, device
     )
 
     model = eqx.combine(solve_result.theta, theta_static)

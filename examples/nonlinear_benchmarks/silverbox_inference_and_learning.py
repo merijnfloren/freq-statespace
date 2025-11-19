@@ -15,16 +15,20 @@ start_time = time.time()
 
 # Step 1: BLA estimation
 nx = 2  # state dimension
-bla = fss.lin.subspace_id(data, nx)  # NRMSE 18.36%, non-iterative
-bla = fss.lin.optimize(bla, data)  # NRMSE 13.17%, 6 iters, 1.97ms/iter
+bla = fss.lin.subspace_id(data, nx)
+bla = fss.lin.optimize(bla, data)
 
 # Step 2: Inference and learning
 phi = fss.static.basis.Polynomial(nz=1, degree=3)
 nllfr = fss.nonlin.inference_and_learning(
-    bla, data, phi=phi, nw=1)  # NRMSE 1.11%, 42 iters, 13.2ms/iter
+    bla, data, phi=phi, nw=1)
 
 # Step 3: Nonlinear optimization
-nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.44%, 100 iters, 387ms/iter
+nllfr = fss.nonlin.optimize(nllfr, data, device="cpu")
+
+# NOTE: CPU is faster here because the optimization problem is recurrent in nature
+# and has very little work per step, so GPU overhead dominates. Larger models perform 
+# enough computation per step for GPUs to become advantageous.
 
 total_time = time.time() - start_time
 print(f"\nTotal time for training: {total_time:.2f} seconds")

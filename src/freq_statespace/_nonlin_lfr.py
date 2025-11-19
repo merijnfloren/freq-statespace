@@ -9,7 +9,7 @@ import numpy as np
 import optimistix as optx
 
 from freq_statespace import _misc
-from freq_statespace._config import PRINT_EVERY, SEED, SOLVER
+from freq_statespace._config import PRINT_EVERY, SEED, SOLVER, DeviceLike
 from freq_statespace._data_manager import FrequencyData, InputOutputData
 from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
 from freq_statespace._solve import solve
@@ -336,6 +336,7 @@ def inference_and_learning(
     print_every: int = PRINT_EVERY,
     seed: int = SEED,
     epsilon: float = EPSILON,
+    device: DeviceLike = None,
 ) -> ModelNonlinearLFR:
     """Perform inference and learning.
 
@@ -368,6 +369,10 @@ def inference_and_learning(
         Random seed for parameter initialization. Defaults to `SEED`.
     epsilon : float
         Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
+    device : `DeviceLike`, optional
+        Device on which to perform the computations. Can be either a device
+        name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
+        provided, the default JAX device is used.
 
     Returns
     -------
@@ -391,7 +396,8 @@ def inference_and_learning(
             bla_loss = _compute_bla_loss(bla, data)
             print(f"    BLA loss: {bla_loss:.4e}")
     solve_result = solve(
-        theta0, solver, args, _loss_inference_and_learning, max_iter, print_every
+        theta0, solver, args, _loss_inference_and_learning,
+        max_iter, print_every, device
     )
 
     aux = solve_result.aux
@@ -438,6 +444,7 @@ def optimize(
     max_iter: int = MAX_ITER_OPTIMIZATION,
     print_every: int = PRINT_EVERY,
     offset: int | None = None,
+    device: DeviceLike = None,
 ) -> ModelNonlinearLFR:
     """Refine the parameters of an NL-LFR model using time-domain simulations.
 
@@ -466,6 +473,12 @@ def optimize(
         DFT computations (the prepended samples are discarded). This approach
         is valid because the data is assumed to be periodic. Defaults to 10% of 
         the data length if not provided.
+        epsilon : float
+        Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
+    device : `DeviceLike`, optional
+        Device on which to perform the computations. Can be either a device
+        name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
+        provided, the default JAX device is used.
 
     Returns
     -------
@@ -490,7 +503,8 @@ def optimize(
             bla_loss = _compute_bla_loss(super(ModelNonlinearLFR, model), data)
             print(f"    BLA loss: {bla_loss:.4e}")
     solve_result = solve(
-        theta0, solver, args, _loss_nonlin_optimization, max_iter, print_every
+        theta0, solver, args, _loss_nonlin_optimization, 
+        max_iter, print_every, device
     )
 
     model = eqx.combine(solve_result.theta, args.theta_static)
