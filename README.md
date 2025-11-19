@@ -68,7 +68,8 @@ Next, we proceed with inference and learning, followed by full nonlinear optimiz
 # Step 2: Inference and learning
 nw, nz = 1, 1  # internal signal dimensions
 phi = fss.static.basis.Polynomial(nz=nz, degree=3)
-nllfr = fss.nonlin.inference_and_learning(bla, data, phi=phi, nw=nw)  # NRMSE 1.11%, 42 iters, 13.2ms/iter
+nllfr = fss.nonlin.inference_and_learning(
+    bla, data, phi=phi, nw=nw)  # NRMSE 1.11%, 42 iters, 13.2ms/iter
 
 # Step 3: Nonlinear optimization
 nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.44%, 100 iters, 387ms/iter
@@ -81,8 +82,7 @@ import jax
 # Step 2: Nonlinear optimization
 nw, nz = 1, 1  # internal signal dimensions
 neural_net = fss.static.NeuralNetwork(
-    nw=nw, nz=nz, num_layers=1, num_neurons_per_layer=10, activation=jax.nn.relu
-)
+    nw=nw, nz=nz, layers=1, neurons_per_layer=10, activation=jax.nn.relu)
 nllfr = fss.nonlin.connect(bla, neural_net)
 nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.54%, 100 iters, 356ms/iter
 ```

@@ -97,8 +97,8 @@ class NeuralNetwork(AbstractNonlinearFunction):
     nz: int
     model: eqx.nn.MLP
     num_parameters: int
-    num_layers: int = eqx.field(repr=False)
-    num_neurons_per_layer: int = eqx.field(repr=False)
+    layers: int = eqx.field(repr=False)
+    neurons_per_layer: int = eqx.field(repr=False)
     activation: Callable = eqx.field(repr=False)
     seed: int = eqx.field(repr=False)
     bias: bool = eqx.field(repr=False)
@@ -108,8 +108,8 @@ class NeuralNetwork(AbstractNonlinearFunction):
         self,
         nz: int,
         nw: int,
-        num_layers: int,
-        num_neurons_per_layer: int,
+        layers: int,
+        neurons_per_layer: int,
         activation: Callable,
         seed: int = SEED,
         bias: bool = True,
@@ -122,9 +122,9 @@ class NeuralNetwork(AbstractNonlinearFunction):
             Number of input features (dimension of latent signal `z`).
         nw : int
             Number of output features (dimension of latent signal `w`).
-        num_layers : int
+        layers : int
             Number of hidden layers.
-        num_neurons_per_layer : int
+        neurons_per_layer : int
             Number of neurons per hidden layer.
         activation : Callable, from `jax.nn`
             Activation function used in hidden layers.
@@ -138,8 +138,8 @@ class NeuralNetwork(AbstractNonlinearFunction):
         """
         self.nz = nz
         self.nw = nw
-        self.num_layers = num_layers
-        self.num_neurons_per_layer = num_neurons_per_layer
+        self.layers = layers
+        self.num_neurons_per_layer = neurons_per_layer
         self.activation = activation
         self.seed = seed
         self.bias = bias
@@ -148,7 +148,7 @@ class NeuralNetwork(AbstractNonlinearFunction):
             in_size=self.nz,
             out_size=self.nw,
             width_size=self.num_neurons_per_layer,
-            depth=self.num_layers,
+            depth=self.layers,
             activation=self.activation,
             use_bias=self.bias,
             key=_misc.get_key(self.seed, "nonlin_funcs")
