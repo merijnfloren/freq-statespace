@@ -68,16 +68,16 @@ class Polynomial(AbstractFeatureMap, strict=True):
             Type of polynomial. Must be one of `"full"`, `"odd"`, or `"even"`.
             Defaults to `"full"`.
         cross_terms : bool, optional
-            If `True`, includes cross-terms in the polynomial features.
+            Whether to include cross-terms in the polynomial features.
             Defaults to `True`.
         offset : bool, optional
-            If `True`, includes a constant offset term in the features.
+            Whether to include a constant offset term in the features.
             Defaults to `True`.
         linear : bool, optional
-            If `True`, includes linear terms in the polynomial features.
+            Whether to include linear terms in the polynomial features.
             Defaults to `True`.
         tanh_clip : bool, optional
-            If `True`, applies `tanh` clipping to the input features before
+            Whether to apply `tanh` clipping to the input features before
             constructing polynomial terms. Defaults to `True`.
 
         """
@@ -177,10 +177,9 @@ class LegendrePolynomial(AbstractFeatureMap, strict=True):
         degree : int
             Maximum polynomial degree.
         offset : bool, optional
-            If `True`, includes a constant offset term. Defaults to `True`.
+            Whether to include a constant offset term. Defaults to `True`.
         tanh_clip : bool, optional
-            If `True`, applies `tanh` clipping to the inputs before constructing
-            Legendre features. Defaults to `True`.
+            Whether to apply `tanh` clipping to the inputs. Defaults to `True`.
 
         """
         self.nz = nz
@@ -252,9 +251,9 @@ class ChebyshevPolynomial(AbstractFeatureMap, strict=True):
             - `1`: First kind (orthogonal w.r.t. 1/sqrt(1 - x²))
             - `2`: Second kind (orthogonal w.r.t. sqrt(1 - x²))
         offset : bool, optional
-            If `True`, includes a constant offset term. Defaults to `True`.
+            Whether to include a constant offset term. Defaults to `True`.
         tanh_clip : bool, optional
-            If `True`, applies `tanh` clipping to the inputs. Defaults to `True`.
+            Whether to apply `tanh` clipping to the inputs. Defaults to `True`.
 
         """
         if type not in (1, 2):

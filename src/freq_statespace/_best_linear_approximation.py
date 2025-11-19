@@ -119,7 +119,7 @@ def compute_nonparametric(U: np.ndarray, Y: np.ndarray) -> NonparametricBLA:
 def subspace_id(
     data: InputOutputData,
     nx: int,
-    q: int,
+    nq: int | None = None,
     logging_enabled: bool = True
 ) -> ModelBLA:
     """Parametrize a state-space model using the frequency-domain subspace method.
@@ -130,10 +130,12 @@ def subspace_id(
         Estimation data.
     nx : int
         State dimension of the system to be identified.
-    q : int
-        Subspace dimensioning parameter, must be greater than `nx`.
+    nq : int | None, optional
+        Subspace dimensioning parameter, must be greater than `nx`. Defaults to
+        `nx + 1` if not provided.
     logging_enabled : bool
-        Whether to print a summary of the identification results.
+        Whether to print a summary of the identification results. Defaults to
+        `True`.
 
     Returns
     -------
@@ -143,16 +145,17 @@ def subspace_id(
     Raises
     ------
     ValueError
-        If `q `is not greater than `nx`.
+        If `nq` is not greater than `nx`.
 
     """
     if logging_enabled:
         header = " Frequency-domain subspace identification "
         print(f"{header:=^72}")
     
-    if q <= nx:
+    nq = nx + 1 if nq is None else nq
+    if nq <= nx:
         raise ValueError(
-            f"Subspace dimension q={q} must be greater than state dimension nx={nx}."
+            f"Subspace dimension nq={nq} must be greater than state dimension nx={nx}."
         )
 
     freq = data.freq
@@ -188,7 +191,7 @@ def subspace_id(
 
     # Perform frequency subspace identification
     fddata = (zj, Y, U)
-    A, B_u, C_y, D_yu = fsid.gfdsid(fddata=fddata, n=nx, q=q, estTrans=False, w=W)[:4]
+    A, B_u, C_y, D_yu = fsid.gfdsid(fddata=fddata, n=nx, q=nq, estTrans=False, w=W)[:4]
 
     model = ModelBLA(A, B_u, C_y, D_yu, ts, data.norm)
 
@@ -216,12 +219,13 @@ def optimize(
         Estimation data.
     solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
         Any least-squares solver or general minimization solver from the
-        Optimistix or Optax libraries.
+        Optimistix or Optax libraries. Defaults to `SOLVER`.
     max_iter : int
-        Maximum number of optimization iterations.
+        Maximum number of optimization iterations. Defaults to `MAX_ITER`.
     print_every : int
         Frequency of printing iteration information. If set to 0, only a
-        summary is printed. If set to -1, no printing is done.
+        summary is printed. If set to -1, no printing is done. Defaults to
+        `PRINT_EVERY`.
 
     Returns
     -------

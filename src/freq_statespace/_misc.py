@@ -11,7 +11,6 @@ from freq_statespace._solve import SolveResult
 
 def load_and_preprocess_silverbox_data() -> InputOutputData:
     """Load (from `nonlinear_benchmarks`) and preprocesses the Silverbox dataset."""
-    # Load data
     train = nonlinear_benchmarks.Silverbox()[0]
     u, y = train.u, train.y
 
@@ -65,7 +64,7 @@ def evaluate_model_performance(
     Parameters
     ----------
     model : `ModelBLA` or `ModelNonlinearLFR`
-        Model to be evaluated. Can be a BLA or NL-LFR model.
+        Model to be evaluated.
     data : `InputOutputData`
         Measured input-output data.
     solve_result : `SolveResult`, optional

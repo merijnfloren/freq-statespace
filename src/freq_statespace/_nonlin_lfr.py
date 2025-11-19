@@ -329,8 +329,8 @@ def inference_and_learning(
     *,
     phi: AbstractFeatureMap,
     nw: int,
-    lambda_w: float,
-    fixed_point_iters: int,
+    lambda_w: float = 1e-2,
+    fixed_point_iters: int = 3,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
     max_iter: int = MAX_ITER_INFERENCE_AND_LEARNING,
     print_every: int = PRINT_EVERY,
@@ -351,21 +351,23 @@ def inference_and_learning(
         Dimension of the latent signal `w`.
     lambda_w : float
         Regularization weight that controls the solution variance of `w`
-        during inference.
+        during inference. Defaults to `1e-2`.
     fixed_point_iters : int
-        Number of fixed-point iterations for internal consistency.
+        Number of fixed-point iterations for internal consistency. Defaults to `3`.
     solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
         Any least-squares solver or general minimization solver from the
-        Optimistix or Optax libraries.
+        Optimistix or Optax libraries. Defaults to `SOLVER`.
     max_iter : int
-        Maximum number of optimization iterations.
+        Maximum number of optimization iterations. Defaults to
+        `MAX_ITER_INFERENCE_AND_LEARNING`.
     print_every : int
         Frequency of printing iteration information. If set to 0, only a
-        summary is printed. If set to -1, no printing is done.
+        summary is printed. If set to -1, no printing is done. Defaults to
+        `PRINT_EVERY`.
     seed : int
-        Random seed for parameter initialization.
+        Random seed for parameter initialization. Defaults to `SEED`.
     epsilon : float
-        Numerical regularization constant for matrix inversion.
+        Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
 
     Returns
     -------
@@ -381,12 +383,12 @@ def inference_and_learning(
     theta0, args = _prepare_inference_and_learning(
         bla, data, phi, nw, lambda_w, fixed_point_iters, seed, epsilon
     )
-    bla_loss = _compute_bla_loss(bla, data)
 
     # Optimize the model parameters
     if logging_enabled:
         print("Starting iterative optimization...")
         if print_every > 0:
+            bla_loss = _compute_bla_loss(bla, data)
             print(f"    BLA loss: {bla_loss:.4e}")
     solve_result = solve(
         theta0, solver, args, _loss_inference_and_learning, max_iter, print_every
@@ -447,12 +449,13 @@ def optimize(
         Measured input-output data object.
     solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
         Any least-squares solver or general minimization solver from the
-        Optimistix or Optax libraries.
+        Optimistix or Optax libraries. Defaults to `SOLVER`.
     max_iter : int
-        Maximum number of optimization iterations.
+        Maximum number of optimization iterations. Defaults to `MAX_ITER_OPTIMIZATION`.
     print_every : int
         Frequency of printing iteration information. If set to 0, only a
-        summary is printed. If set to -1, no printing is done.
+        summary is printed. If set to -1, no printing is done. Defaults to
+        `PRINT_EVERY`.
     offset : int, optional
         A non-negative integer `≤ N`. This value is used to select
         the unknown initial state of the time-domain simulations. Specifically,
@@ -461,8 +464,8 @@ def optimize(
         are prepended accordingly. This warm-up ensures the system reaches
         steady-state before the main period begins, allowing for leakage-free
         DFT computations (the prepended samples are discarded). This approach
-        is valid because the data is assumed to be periodic. If not specified,
-        `offset` defaults to 10% of the data length.
+        is valid because the data is assumed to be periodic. Defaults to 10% of 
+        the data length if not provided.
 
     Returns
     -------
@@ -480,12 +483,11 @@ def optimize(
 
     theta0, args = _prepare_nonlin_optimization(data, model, offset)
 
-    bla_loss = _compute_bla_loss(super(ModelNonlinearLFR, model), data)
-
     # Optimize the model parameters
     if logging_enabled:
         print("Starting iterative optimization...")
         if print_every > 0:
+            bla_loss = _compute_bla_loss(super(ModelNonlinearLFR, model), data)
             print(f"    BLA loss: {bla_loss:.4e}")
     solve_result = solve(
         theta0, solver, args, _loss_nonlin_optimization, max_iter, print_every
@@ -501,7 +503,11 @@ def optimize(
     return model
 
 
-def construct(bla: ModelBLA, f_static: AbstractNonlinearFunction) -> ModelNonlinearLFR:
+def connect(
+    bla: ModelBLA,
+    f_static: AbstractNonlinearFunction,
+    sigma: float = 1e-4
+) -> ModelNonlinearLFR:
     """Construct an NL-LFR model given the BLA and a static nonlinear function object.
 
     Parameters
@@ -513,6 +519,10 @@ def construct(bla: ModelBLA, f_static: AbstractNonlinearFunction) -> ModelNonlin
         the latent signals `z` and `w`. Note that the `seed` attribute of
         `f_static` is used to randomly initialize the matrices `B_w`, `C_z`,
         `D_yw`, and `D_zu`.
+    sigma : float
+        Scaling factor for the random initialization of `B_w` and `D_yw`. Defaults
+        to `1e-4` to ensure that the initial loss of the NL-LFR model is close to
+        the BLA loss.
 
     Returns
     -------
@@ -533,9 +543,8 @@ def construct(bla: ModelBLA, f_static: AbstractNonlinearFunction) -> ModelNonlin
     # contribution of the static nonlinearity does not significantly affect
     # the initial loss. (Initializing B_w and D_yw with zeros could hamper
     # convergence because of zero gradients.)
-    scale = 1e-6
-    B_w = scale * jax.random.normal(key_B_w, (nx, nw))
-    D_yw = scale * jax.random.normal(key_D_yw, (ny, nw))
+    B_w = sigma * jax.random.normal(key_B_w, (nx, nw))
+    D_yw = sigma * jax.random.normal(key_D_yw, (ny, nw))
 
     C_z = jax.random.normal(key_C_z, (nz, nx))
     D_zu = jax.random.normal(key_D_zu, (nz, nu))

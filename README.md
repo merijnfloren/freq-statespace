@@ -8,7 +8,7 @@ It’s built around the **nonlinear Linear Fractional Representation (NL-LFR)** 
 
 ### Basic usage
 
-The package works with input–output data sequences $u(n)$ and $y(n)$ for $n = 0, \ldots, N-1$, assuming the system is excited by a periodic input and that an integer number of steady-state output periods has been recorded. The specific NL-LFR structure is defined as:
+The package works with (multiple periods and realisations of) input–output data sequences $u(n)$ and $y(n)$ for $n = 0, \ldots, N-1$, assuming periodic excitation and an integer number of steady-state output periods. The specific NL-LFR structure is defined as:
 ```math
   \begin{align*}
     x(n+1) &= A x(n) + B_u u(n) + B_w w(n),\\
@@ -32,7 +32,8 @@ A typical step-wise identification procedure is as follows:
 It is also possible to skip the inference and learning step and go straight to nonlinear optimization. An advantage of this approach is that it puts no restriction on the structure of $f(\cdot)$, i.e., it does not require a model that is linear in the parameters.
 
 ### Features
-- Provides two workflows for identifying nonlinear LFR state-space models by primarily exploiting a frequency-domain formulation that enables inherent parallelism.
+- Provides a user-friendly interface for identifying linear state-space models using frequency-domain subspace estimation based on the BLA.
+- Offers two workflows for identifying nonlinear LFR state-space models by primarily exploiting a frequency-domain formulation that enables inherent parallelism.
 - Leverages JAX for automatic differentiation, JIT compilation, and GPU/TPU acceleration.
 - Supports [Optimistix](https://docs.kidger.site/optimistix/) solvers (Levenberg–Marquardt, BFGS, ...) for typical system identification problems.
 - Supports [Optax](https://optax.readthedocs.io/en/latest/) optimizers (Adam, SGD, ...) for large-scale optimization.
@@ -58,8 +59,7 @@ data = fss.load_and_preprocess_silverbox_data()  # 8192 x 6 samples
 
 # Step 1: BLA estimation
 nx = 2  # state dimension
-q = nx + 1  # subspace dimensioning parameter
-bla = fss.lin.subspace_id(data, nx, q)  # NRMSE 18.36%, non-iterative
+bla = fss.lin.subspace_id(data, nx)  # NRMSE 18.36%, non-iterative
 bla = fss.lin.optimize(bla, data)  # NRMSE 13.17%, 6 iters, 1.97ms/iter
 ```
 Next, we proceed with inference and learning, followed by full nonlinear optimization:
@@ -68,9 +68,7 @@ Next, we proceed with inference and learning, followed by full nonlinear optimiz
 # Step 2: Inference and learning
 nw, nz = 1, 1  # internal signal dimensions
 phi = fss.f_static.basis.Polynomial(nz=nz, degree=3)
-nllfr = fss.nonlin.inference_and_learning(
-    bla, data, phi=phi, nw=nw, lambda_w=1e-2, fixed_point_iters=5
-)  # NRMSE 1.11%, 42 iters, 13.2ms/iter
+nllfr = fss.nonlin.inference_and_learning(bla, data, phi=phi, nw=nw)  # NRMSE 1.11%, 42 iters, 13.2ms/iter
 
 # Step 3: Nonlinear optimization
 nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.44%, 100 iters, 387ms/iter
@@ -85,7 +83,7 @@ nw, nz = 1, 1  # internal signal dimensions
 neural_net = fss.f_static.NeuralNetwork(
     nw=nw, nz=nz, num_layers=1, num_neurons_per_layer=10, activation=jax.nn.relu
 )
-nllfr = fss.nonlin.construct(bla, neural_net)
+nllfr = fss.nonlin.connect(bla, neural_net)
 nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.54%, 100 iters, 356ms/iter
 ```
 > **Note:** Iteration timings were measured on an NVIDIA T600 Laptop GPU.
