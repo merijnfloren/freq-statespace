@@ -116,7 +116,12 @@ def compute_nonparametric(U: np.ndarray, Y: np.ndarray) -> NonparametricBLA:
     return NonparametricBLA(G_bla, var_noise, var_tot)
 
 
-def subspace_id(data: InputOutputData, nx: int, q: int) -> ModelBLA:
+def subspace_id(
+    data: InputOutputData,
+    nx: int,
+    q: int,
+    logging_enabled: bool = True
+) -> ModelBLA:
     """Parametrize a state-space model using the frequency-domain subspace method.
 
     Parameters
@@ -127,6 +132,8 @@ def subspace_id(data: InputOutputData, nx: int, q: int) -> ModelBLA:
         State dimension of the system to be identified.
     q : int
         Subspace dimensioning parameter, must be greater than `nx`.
+    logging_enabled : bool
+        Whether to print a summary of the identification results.
 
     Returns
     -------
@@ -139,8 +146,10 @@ def subspace_id(data: InputOutputData, nx: int, q: int) -> ModelBLA:
         If `q `is not greater than `nx`.
 
     """
-    header = " Frequency-domain subspace identification "
-    print(f"{header:=^72}")
+    if logging_enabled:
+        header = " Frequency-domain subspace identification "
+        print(f"{header:=^72}")
+    
     if q <= nx:
         raise ValueError(
             f"Subspace dimension q={q} must be greater than state dimension nx={nx}."
@@ -183,7 +192,8 @@ def subspace_id(data: InputOutputData, nx: int, q: int) -> ModelBLA:
 
     model = ModelBLA(A, B_u, C_y, D_yu, ts, data.norm)
 
-    _misc.evaluate_model_performance(model, data)
+    if logging_enabled:
+        _misc.evaluate_model_performance(model, data)
 
     return model
 
@@ -210,8 +220,8 @@ def optimize(
     max_iter : int
         Maximum number of optimization iterations.
     print_every : int
-        Frequency of printing iteration information. If set to 0, no
-        information is printed.
+        Frequency of printing iteration information. If set to 0, only a
+        summary is printed. If set to -1, no printing is done.
 
     Returns
     -------
@@ -219,8 +229,11 @@ def optimize(
         BLA model with optimized parameters.
 
     """
-    header = " BLA optimization  "
-    print(f"{header:=^72}")
+    logging_enabled = print_every != -1
+    
+    if logging_enabled:
+        header = " BLA optimization  "
+        print(f"{header:=^72}")
 
     freq = data.freq
     G_bla = freq.G_bla
@@ -238,7 +251,8 @@ def optimize(
     args = (theta_static, jnp.asarray(G_bla.G), f_data, W)
 
     # Optimize the model parameters
-    print("Starting iterative optimization...")
+    if logging_enabled:
+        print("Starting iterative optimization...")
     solve_result = solve(
         theta0_dyn, solver, args, _compute_weighted_residual, max_iter, print_every
     )
@@ -246,6 +260,7 @@ def optimize(
     model = eqx.combine(solve_result.theta, theta_static)
     model = _normalize_states(model, freq)
 
-    _misc.evaluate_model_performance(model, data, solve_result=solve_result)
+    if logging_enabled:
+        _misc.evaluate_model_performance(model, data, solve_result=solve_result)
 
     return model

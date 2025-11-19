@@ -360,8 +360,8 @@ def inference_and_learning(
     max_iter : int
         Maximum number of optimization iterations.
     print_every : int
-        Frequency of printing iteration information. If set to 0, no
-        information is printed.
+        Frequency of printing iteration information. If set to 0, only a
+        summary is printed. If set to -1, no printing is done.
     seed : int
         Random seed for parameter initialization.
     epsilon : float
@@ -373,8 +373,10 @@ def inference_and_learning(
         Fully initialized NL-LFR model.
 
     """
-    header = " NL-LFR inference and learning  "
-    print(f"{header:=^72}")
+    logging_enabled = print_every != -1
+    if logging_enabled:
+        header = " NL-LFR inference and learning  "
+        print(f"{header:=^72}")
 
     theta0, args = _prepare_inference_and_learning(
         bla, data, phi, nw, lambda_w, fixed_point_iters, seed, epsilon
@@ -382,9 +384,10 @@ def inference_and_learning(
     bla_loss = _compute_bla_loss(bla, data)
 
     # Optimize the model parameters
-    print("Starting iterative optimization...")
-    if print_every > 0:
-        print(f"    BLA loss: {bla_loss:.4e}")
+    if logging_enabled:
+        print("Starting iterative optimization...")
+        if print_every > 0:
+            print(f"    BLA loss: {bla_loss:.4e}")
     solve_result = solve(
         theta0, solver, args, _loss_inference_and_learning, max_iter, print_every
     )
@@ -407,19 +410,20 @@ def inference_and_learning(
         norm=bla.norm,
     )
 
-    _misc.evaluate_model_performance(model, data, solve_result=solve_result)
+    if logging_enabled:
+        _misc.evaluate_model_performance(model, data, solve_result=solve_result)
 
-    # Compute recursive loss of the NL-LFR model to check consistency with the
-    # inference and learning solution. We simulate 2 periods and discard the
-    # first one to ensure that transients have died out (see `offset`)
-    y_hat = model._simulate(data.time.u, offset=data.time.u.shape[0])[0]
-    Y_hat = jnp.fft.rfft(y_hat, axis=0)
-    loss_recursive = _compute_weighted_residual(data.freq.Y, Y_hat, args.Lambda)
-    scalar_loss_recursive = jnp.sum(jnp.abs(loss_recursive) ** 2)
+        # Compute recursive loss of the NL-LFR model to check consistency with the
+        # inference and learning solution. We simulate 2 periods and discard the
+        # first one to ensure that transients have died out (see `offset`)
+        y_hat = model._simulate(data.time.u, offset=data.time.u.shape[0])[0]
+        Y_hat = jnp.fft.rfft(y_hat, axis=0)
+        loss_recursive = _compute_weighted_residual(data.freq.Y, Y_hat, args.Lambda)
+        scalar_loss_recursive = jnp.sum(jnp.abs(loss_recursive) ** 2)
 
-    print("NL-LFR loss consistency check:")
-    print(f"    Inference & learning loss = {scalar_loss:.4e}")
-    print(f"    Recursive simulation loss = {scalar_loss_recursive:.4e}\n")
+        print("NL-LFR loss consistency check:")
+        print(f"    Inference & learning loss = {scalar_loss:.4e}")
+        print(f"    Recursive simulation loss = {scalar_loss_recursive:.4e}\n")
 
     return model
 
@@ -447,8 +451,8 @@ def optimize(
     max_iter : int
         Maximum number of optimization iterations.
     print_every : int
-        Frequency of printing iteration information. If set to 0, no
-        information is printed.
+        Frequency of printing iteration information. If set to 0, only a
+        summary is printed. If set to -1, no printing is done.
     offset : int, optional
         A non-negative integer `≤ N`. This value is used to select
         the unknown initial state of the time-domain simulations. Specifically,
@@ -466,8 +470,10 @@ def optimize(
         NL-LFR model with optimized parameters.
 
     """
-    header = " NL-LFR optimization  "
-    print(f"{header:=^72}")
+    logging_enabled = print_every != -1
+    if logging_enabled:
+        header = " NL-LFR optimization  "
+        print(f"{header:=^72}")
 
     if offset is None:  # we start 10% 'ahead of time'
         offset = int(np.ceil(0.1 * data.time.u.shape[0]))
@@ -476,18 +482,21 @@ def optimize(
 
     bla_loss = _compute_bla_loss(super(ModelNonlinearLFR, model), data)
 
-    print("Starting iterative optimization...")
-    if print_every > 0:
-        print(f"    BLA loss: {bla_loss:.4e}")
+    # Optimize the model parameters
+    if logging_enabled:
+        print("Starting iterative optimization...")
+        if print_every > 0:
+            print(f"    BLA loss: {bla_loss:.4e}")
     solve_result = solve(
         theta0, solver, args, _loss_nonlin_optimization, max_iter, print_every
     )
 
     model = eqx.combine(solve_result.theta, args.theta_static)
 
-    _misc.evaluate_model_performance(
-        model, data, solve_result=solve_result, offset=offset
-    )
+    if logging_enabled:
+        _misc.evaluate_model_performance(
+            model, data, solve_result=solve_result, offset=offset
+        )
 
     return model
 
