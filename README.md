@@ -25,11 +25,11 @@ A typical step-wise identification procedure is as follows:
 2. **NL-LFR initialization**. Applies the [frequency-domain inference and learning method](https://arxiv.org/abs/2503.14409) to efficiently initialize the remaining model parameters while keeping the BLA parameters fixed. This step requires that $f(\cdot)$ is linear in the parameters, i.e., $f(\cdot)=\beta^\top\phi(\cdot)$, with $\beta$ the parameter vector and $\phi(\cdot)$ the nonlinear feature mapping (e.g., polynomial features).
 3. **NL-LFR optimization**. Performs iterative refinement of all model parameters using time-domain simulations. This is the most computationally demanding step, mainly due to the sequential nature of the forward simulations. Fortunately, the previous steps should have provided an initialization that is already close to a good local minimum.
 
-It is also possible to skip the inference and learning step and go straight to nonlinear optimization. An advantage of this approach is that it puts no restriction on the structure of $f(\cdot)$, i.e., it does not require a model that is linear in the parameters.
+It is also possible to skip the inference and learning step and go straight to nonlinear optimization. An advantage of this approach is that it puts no restriction on the structure of $f(\cdot)$, i.e., it does not require a model that is linear in its parameters.
 
 ### Features
-- Provides a user-friendly interface for identifying linear state-space models using frequency-domain subspace estimation based on the nonparametric BLA.
-- Offers two workflows for identifying nonlinear LFR state-space models by primarily exploiting a frequency-domain formulation that enables inherent parallelism.
+- Provides a user-friendly interface for identifying _linear_ state-space models using frequency-domain subspace estimation based on the nonparametric BLA.
+- Offers two workflows for identifying _nonlinear_ LFR state-space models by primarily exploiting a frequency-domain formulation that enables inherent parallelism.
 - Leverages JAX for automatic differentiation, JIT compilation, and GPU/TPU acceleration.
 - Supports [Optimistix](https://docs.kidger.site/optimistix/) solvers (Levenberg–Marquardt, BFGS, ...) for typical system identification problems.
 - Supports [Optax](https://optax.readthedocs.io/en/latest/) optimizers (Adam, SGD, ...) for large-scale optimization.
