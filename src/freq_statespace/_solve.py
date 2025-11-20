@@ -62,12 +62,15 @@ def _get_device(device: DeviceLike):
         return device
 
     platform = device.lower()
-    candidates = jax.devices(platform)
-    if not candidates:
+    try:
+        # NOTE: Calling jax.devices with a string like below is currently an
+        # experimental JAX feature; the API is likely to change
+        candidates = jax.devices(platform)
+    except RuntimeError as e:
         raise RuntimeError(
-            f"Requested device '{platform}', but no such devices are available. "
+            f"Requested device '{platform}', but no such device is available. "
             f"Available platforms: {sorted(_available_platforms())}"
-        )
+        ) from e
 
     return candidates[0]
 
