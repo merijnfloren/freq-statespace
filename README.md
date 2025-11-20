@@ -85,7 +85,7 @@ nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.54%, 100 iters, 356ms/iter
 > **Note:** Iteration timings were measured on an NVIDIA T600 Laptop GPU.
 
 ## Preparing your data
-Every identification problem starts by casting the time-domain input-output data into the required format and supplying minimal frequency metadata (the excited frequencies and the sampling frequency); the helper function `fss.create_data_object(...)` is provided for this purpose. After this preparation, the workflow proceeds exactly as in the quick example above ( the `examples/` folder also includes a Jupyter notebook illustrating a more challenging benchmark system, along with additional notes on hyperparameter tuning and solver configurations).
+Every identification problem starts by casting the time-domain input-output data into the required format and supplying minimal frequency metadata (the excited frequencies and the sampling frequency); the helper function `fss.create_data_object(...)` is provided for this purpose. After this preparation, the workflow proceeds exactly as in the quick example above (the `examples/` folder also includes a Jupyter notebook illustrating a more challenging benchmark system, along with additional notes on hyperparameter tuning and solver configurations).
 
 
 ## Citation
