@@ -7,16 +7,16 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from freq_statespace import _misc
-from freq_statespace._config import SEED
-from freq_statespace.static._feature_maps import AbstractFeatureMap
+from .. import _misc
+from .._config import SEED
+from ..static._feature_maps import AbstractFeatureMap
 
 
 class AbstractNonlinearFunction(eqx.Module):
     """Abstract base class for nonlinear function mappings.
 
     Subclasses must provide the attributes `nw`, `nz`, `seed`, and
-    `num_parameters`, and implement the method `_evaluate`.
+    `num_parameters`, and implement the method `_evaluate()`.
     """
 
     nw: eqx.AbstractVar[int]
@@ -30,7 +30,7 @@ class AbstractNonlinearFunction(eqx.Module):
 
         From inputs of shape (..., `nz`) to outputs of shape (..., `nw`).
         """
-        pass
+        ...
 
 
 class BasisFunctionModel(AbstractNonlinearFunction):

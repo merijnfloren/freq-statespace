@@ -4,9 +4,9 @@ import jax
 import nonlinear_benchmarks
 import numpy as np
 
-from freq_statespace._data_manager import InputOutputData, create_data_object
-from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
-from freq_statespace._solve import SolveResult
+from ._data_manager import InputOutputData, create_data_object
+from ._model_structures import ModelBLA, ModelNonlinearLFR
+from ._solve import SolveResult
 
 
 def load_and_preprocess_silverbox_data() -> InputOutputData:

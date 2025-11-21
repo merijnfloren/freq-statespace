@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import numpy as np
 
-from freq_statespace import _best_linear_approximation
+from . import _best_linear_approximation
 
 
 @dataclass(frozen=True)

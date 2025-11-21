@@ -1,6 +1,5 @@
 """NL-LFR model inference and learning, and nonlinear optimization."""
-
-from typing import NamedTuple
+from __future__ import annotations
 
 import equinox as eqx
 import jax
@@ -8,13 +7,13 @@ import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
 
-from freq_statespace import _misc
-from freq_statespace._config import PRINT_EVERY, SEED, SOLVER, DeviceLike
-from freq_statespace._data_manager import FrequencyData, InputOutputData
-from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
-from freq_statespace._solve import solve
-from freq_statespace.static._feature_maps import AbstractFeatureMap
-from freq_statespace.static._nonlin_funcs import (
+from . import _misc
+from ._config import PRINT_EVERY, SEED, SOLVER, DeviceLike
+from ._data_manager import FrequencyData, InputOutputData
+from ._model_structures import ModelBLA, ModelNonlinearLFR
+from ._solve import BatchedArgs, solve
+from .static._feature_maps import AbstractFeatureMap
+from .static._nonlin_funcs import (
     AbstractNonlinearFunction,
     BasisFunctionModel,
 )
@@ -25,18 +24,18 @@ MAX_ITER_OPTIMIZATION = 100
 EPSILON = 1e-10
 
 
-class _ThetaWZ(eqx.Module):
+class ThetaWZ(eqx.Module):
     """Decision variables for inference and learning."""
 
     B_w_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
     C_z_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
     D_yw_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
     D_zu_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
-
-
-class _ArgsInferenceLearning(NamedTuple):
-    """Static arguments for inference and learning."""
-
+    
+        
+class InferenceLearningArgs(eqx.Module):
+    """Arguments for inference and learning optimization."""
+    
     theta_uy: tuple  # (A, B_u, C_y)
     phi: AbstractFeatureMap
     lambda_w: float
@@ -48,16 +47,16 @@ class _ArgsInferenceLearning(NamedTuple):
     N: int
 
 
-class _ArgsNonlinOptimization(NamedTuple):
-    """Static arguments for nonlinear optimization."""
-
+class NonlinearOptimizationArgs(eqx.Module):
+    """Arguments for nonlinear LFR optimization."""
+    
     theta_static: ModelNonlinearLFR
     u: jnp.ndarray  # shape (N, nu, R)
-    Y: jnp.ndarray  # shape (N, ny, R)
+    Y: jnp.ndarray  # shape (F, ny, R)
     Lambda: jnp.ndarray  # shape (F, ny, ny)
     x0: jnp.ndarray  # shape (nx, R)
     offset: int
-
+    
 
 def _compute_weighting_matrix(freq: FrequencyData) -> jnp.ndarray:
     """Compute weighting matrix for the loss function."""
@@ -96,10 +95,10 @@ def _create_basis_function_model_given_beta(
     When a user does not want to perform inference and learning, and instead
     wants to perform nonlinear optimization directly, a `BasisFunctionModel` is
     initialized randomly with a seed (specifying a custom `beta` is not
-    supported). This (private!) function bypasses that behavior by replacing
-    the random `beta` with the provided matrix obtained from inference and
-    learning. A dummy seed is still required for initialization, but it does
-    not affect the final result.
+    supported). This function bypasses that behavior by replacing the random
+    beta` with the provided matrix obtained from inference and learning. A 
+    dummy seed is still required for initialization, but it does not affect the
+    final result.
     """
     dummy_seed = 0
 
@@ -108,6 +107,27 @@ def _create_basis_function_model_given_beta(
         pytree=BasisFunctionModel(nw, phi, dummy_seed),
         replace=beta,
     )
+
+
+def validate_batch_size(batch_size: int | None, num_realizations: int) -> None:
+    """Validate and possibly warn about suboptimal `batch_size`."""
+    if batch_size is None:
+        return
+
+    if not isinstance(batch_size, int):
+        raise TypeError("`batch_size` must be an integer or None.")
+
+    if not (1 <= batch_size <= num_realizations):
+        raise ValueError(
+            f"`batch_size` must be in [1, {num_realizations}], got {batch_size}."
+        )
+
+    if num_realizations % batch_size != 0:
+        print(
+            f"Warning: number of realizations ({num_realizations}) is not divisible by "
+            f"`batch_size` ({batch_size}). The final partial batch of size "
+            f"{num_realizations % batch_size} won't be used for training."
+        )
 
 
 def _prepare_inference_and_learning(
@@ -119,11 +139,16 @@ def _prepare_inference_and_learning(
     fixed_point_iters: int,
     seed: int,
     epsilon: float,
-) -> tuple[ModelNonlinearLFR, _ArgsInferenceLearning]:
+) -> tuple[ModelNonlinearLFR, BatchedArgs[InferenceLearningArgs]]:
     """Prepare initial guess and function arguments for inference and learning."""
+    def _slice_fn(args: InferenceLearningArgs, idx: slice):
+        freqs, fs, U, Y, G_yu = args.f_data
+        new_f_data = (freqs, fs, U[..., idx], Y[..., idx], G_yu)
+        return eqx.tree_at(lambda leaf: leaf.f_data, args, new_f_data)
+    
     nz = phi.nz
     ny, nx = bla.C_y.shape
-    N, nu = data.time.u.shape[:2]
+    N, nu, R = data.time.u.shape
 
     f_full = data.freq.f
     U = data.freq.U
@@ -138,7 +163,7 @@ def _prepare_inference_and_learning(
     D_zu_star = jax.random.normal(key_D_zu, (nz, nu))
     D_yw_star = jax.random.normal(key_D_yw, (ny, nw))
 
-    theta_wz = _ThetaWZ(B_w_star, C_z_star, D_yw_star, D_zu_star)
+    theta_wz = ThetaWZ(B_w_star, C_z_star, D_yw_star, D_zu_star)
     theta_uy = (bla.A, bla.B_u, bla.C_y)
 
     # Compute z_star normalization
@@ -154,25 +179,36 @@ def _prepare_inference_and_learning(
     G_yu = bla._frequency_response(f_full)
     f_data = (f_full, 1 / data.time.ts, U, Y, G_yu)
 
-    args = _ArgsInferenceLearning(
-        theta_uy=theta_uy,
-        phi=phi,
-        lambda_w=lambda_w,
-        fixed_point_iters=fixed_point_iters,
-        f_data=f_data,
-        Lambda=_compute_weighting_matrix(data.freq),
-        Tz_inv=Tz_inv,
-        epsilon=epsilon,
-        N=N,
+    batch_args = BatchedArgs(
+        args=InferenceLearningArgs(
+            theta_uy=theta_uy,
+            phi=phi,
+            lambda_w=lambda_w,
+            fixed_point_iters=fixed_point_iters,
+            f_data=f_data,
+            Lambda=_compute_weighting_matrix(data.freq),
+            Tz_inv=Tz_inv,
+            epsilon=epsilon,
+            N=N,
+        ),
+        num_realizations=R,
+        slice_fn=_slice_fn,
     )
 
-    return theta_wz, args
+    return theta_wz, batch_args
 
 
 def _prepare_nonlin_optimization(
     data: InputOutputData, model_init: ModelNonlinearLFR, offset: int
-) -> tuple[ModelNonlinearLFR, _ArgsNonlinOptimization]:
+) -> tuple[ModelNonlinearLFR, BatchedArgs[NonlinearOptimizationArgs]]:
     """Prepare initial guess and function arguments for nonlinear optimization."""
+    def _slice_fn(args: NonlinearOptimizationArgs, idx: slice):
+        return eqx.tree_at(
+            where=lambda leaf: (leaf.u, leaf.Y, leaf.x0),
+            pytree=args,
+            replace=(args.u[..., idx], args.Y[..., idx], args.x0[:, idx]),
+        )
+        
     theta0, theta_static = eqx.partition(model_init, eqx.is_inexact_array)
 
     bla = super(ModelNonlinearLFR, model_init)
@@ -181,16 +217,20 @@ def _prepare_nonlin_optimization(
     x_bla = bla._simulate(data.time.u, offset=data.time.u.shape[0])[1]
     x0 = x_bla[-offset, :, :]
 
-    args = _ArgsNonlinOptimization(
-        theta_static=theta_static,
-        u=data.time.u,
-        Y=data.freq.Y,
-        Lambda=_compute_weighting_matrix(data.freq),
-        x0=x0,
-        offset=offset,
+    batch_args = BatchedArgs(
+        args=NonlinearOptimizationArgs(
+            theta_static=theta_static,
+            u=data.time.u,
+            Y=data.freq.Y,
+            Lambda=_compute_weighting_matrix(data.freq),
+            x0=x0,
+            offset=offset,
+        ),
+        num_realizations=data.time.u.shape[2],
+        slice_fn=_slice_fn,
     )
 
-    return theta0, args
+    return theta0, batch_args
 
 
 def _compute_weighted_residual(
@@ -212,9 +252,7 @@ def _compute_weighted_residual(
     return jnp.sqrt(Lambda / (R * N)) @ (Y - Y_hat)
 
 
-def _loss_inference_and_learning(
-    theta: _ThetaWZ, args: _ArgsInferenceLearning
-) -> tuple:
+def _loss_inference_and_learning(theta: ThetaWZ, args: InferenceLearningArgs) -> tuple:
     """Implement the inference and learning method and compute the loss."""
     f_full, fs, U, Y, G_yu = args.f_data
 
@@ -259,7 +297,7 @@ def _loss_inference_and_learning(
         Y_hat = G_yu[k, ...] @ U[k, ...] + G_yw[k, ...] @ W_hat
         return W_hat, Z_hat, Y_hat
 
-    W_star, Z_star, Y_hat = jax.vmap(_infer_nonparametric_signals)(jnp.arange(F))  # noqa: E501
+    W_star, Z_star, Y_hat = jax.vmap(_infer_nonparametric_signals)(jnp.arange(F))
 
     # 2) Parametric learning
     w_star = jnp.fft.irfft(W_star, n=args.N, axis=0)
@@ -289,7 +327,7 @@ def _loss_inference_and_learning(
         args.fixed_point_iters,
         _fixed_point_iteration,
         phi_z_star,
-        unroll=True,  # noqa: E501
+        unroll=True
     )
 
     w_hat_stacked = phi_z @ beta_hat
@@ -306,7 +344,7 @@ def _loss_inference_and_learning(
 
 
 def _loss_nonlin_optimization(
-    theta: ModelNonlinearLFR, args: _ArgsNonlinOptimization
+    theta: ModelNonlinearLFR, args: NonlinearOptimizationArgs
 ) -> tuple:
     """Perform time-domain forward simulations and compute the loss."""
     theta = eqx.combine(theta, args.theta_static)
@@ -326,9 +364,9 @@ def _loss_nonlin_optimization(
 def inference_and_learning(
     bla: ModelBLA,
     data: InputOutputData,
-    *,
     phi: AbstractFeatureMap,
     nw: int,
+    *,
     lambda_w: float = 1e-2,
     fixed_point_iters: int = 3,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
@@ -337,6 +375,7 @@ def inference_and_learning(
     seed: int = SEED,
     epsilon: float = EPSILON,
     device: DeviceLike = None,
+    batch_size: int | None = None
 ) -> ModelNonlinearLFR:
     """Perform inference and learning.
 
@@ -373,13 +412,30 @@ def inference_and_learning(
         Device on which to perform the computations. Can be either a device
         name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
         provided, the default JAX device is used.
+    batch_size : int, optional
+        Number of realizations to process in a single batch. Working with smaller 
+        batches is mainly useful to reduce memory consumption for large-scale problems.
+        When the total number of realizations is not divisible by `batch_size`, the 
+        final partial batch is skipped, as compiling it separately would increase memory
+        usage. If not provided, all realizations are processed at once.
 
     Returns
     -------
     `ModelNonlinearLFR`
         Fully initialized NL-LFR model.
+        
+    Raises
+    ------
+    ValueError
+        If `batch_size` is not in `[1, R]`, where `R` is the number of
+        realizations in the data.
+    TypeError
+        If `batch_size` is not an integer or `None`.
 
     """
+    R = data.time.u.shape[2]
+    validate_batch_size(batch_size, R)
+
     logging_enabled = print_every != -1
     if logging_enabled:
         header = " NL-LFR inference and learning  "
@@ -395,14 +451,14 @@ def inference_and_learning(
         if print_every > 0:
             bla_loss = _compute_bla_loss(bla, data)
             print(f"    BLA loss: {bla_loss:.4e}")
+
     solve_result = solve(
         theta0, solver, args, _loss_inference_and_learning,
-        max_iter, print_every, device
+        max_iter, print_every, device, batch_size
     )
 
-    aux = solve_result.aux
-    scalar_loss = aux[0]
-    beta = aux[-1]
+    scalar_loss, beta = solve_result.aux
+    args = args.args  # unwrap from BatchedArgs
 
     model = ModelNonlinearLFR(
         A=args.theta_uy[0],
@@ -445,6 +501,7 @@ def optimize(
     print_every: int = PRINT_EVERY,
     offset: int | None = None,
     device: DeviceLike = None,
+    batch_size: int | None = None
 ) -> ModelNonlinearLFR:
     """Refine the parameters of an NL-LFR model using time-domain simulations.
 
@@ -479,13 +536,30 @@ def optimize(
         Device on which to perform the computations. Can be either a device
         name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
         provided, the default JAX device is used.
+    batch_size : int, optional
+        Number of realizations to process in a single batch. Working with smaller 
+        batches is mainly useful to reduce memory consumption for large-scale problems.
+        When the total number of realizations is not divisible by `batch_size`, the 
+        final partial batch is skipped, as compiling it separately would increase memory
+        usage. If not provided, all realizations are processed at once.
 
     Returns
     -------
     `ModelNonlinearLFR`
         NL-LFR model with optimized parameters.
 
+    Raises
+    ------
+    ValueError
+        If `batch_size` is not in `[1, R]`, where `R` is the number of
+        realizations in the data.
+    TypeError
+        If `batch_size` is not an integer or `None`.
+
     """
+    R = data.time.u.shape[2]
+    validate_batch_size(batch_size, R)
+    
     logging_enabled = print_every != -1
     if logging_enabled:
         header = " NL-LFR optimization  "
@@ -494,7 +568,7 @@ def optimize(
     if offset is None:  # we start 10% 'ahead of time'
         offset = int(np.ceil(0.1 * data.time.u.shape[0]))
 
-    theta0, args = _prepare_nonlin_optimization(data, model, offset)
+    theta0, batch_args = _prepare_nonlin_optimization(data, model, offset)
 
     # Optimize the model parameters
     if logging_enabled:
@@ -502,12 +576,13 @@ def optimize(
         if print_every > 0:
             bla_loss = _compute_bla_loss(super(ModelNonlinearLFR, model), data)
             print(f"    BLA loss: {bla_loss:.4e}")
+
     solve_result = solve(
-        theta0, solver, args, _loss_nonlin_optimization, 
-        max_iter, print_every, device
+        theta0, solver, batch_args, _loss_nonlin_optimization, 
+        max_iter, print_every, device, batch_size
     )
 
-    model = eqx.combine(solve_result.theta, args.theta_static)
+    model = eqx.combine(solve_result.theta, batch_args.args.theta_static)
 
     if logging_enabled:
         _misc.evaluate_model_performance(

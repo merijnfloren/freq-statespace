@@ -5,8 +5,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from freq_statespace._data_manager import Normalizer
-from freq_statespace.static._nonlin_funcs import AbstractNonlinearFunction
+from ._data_manager import Normalizer
+from .static._nonlin_funcs import AbstractNonlinearFunction
 
 
 class ModelBLA(eqx.Module):

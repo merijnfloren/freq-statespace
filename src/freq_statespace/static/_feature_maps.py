@@ -13,7 +13,7 @@ class AbstractFeatureMap(eqx.Module):
     """Abstract base class for feature mappings.
 
     Subclasses must provide the attributes `nz` and `num_features`,
-    and must implement the methods `_compute_features()` and `num_features()`.
+    and must implement the method `_compute_features()`.
     """
 
     nz: eqx.AbstractVar[int]
@@ -25,10 +25,10 @@ class AbstractFeatureMap(eqx.Module):
 
         From inputs of shape (..., `nz`) to outputs of shape (..., `num_features`).
         """
-        pass
+        ...
 
 
-class Polynomial(AbstractFeatureMap, strict=True):
+class Polynomial(AbstractFeatureMap):
     """Flexible polynomial feature map.
 
     This class constructs and evaluates polynomial basis features up to a
@@ -147,7 +147,7 @@ class Polynomial(AbstractFeatureMap, strict=True):
         return jnp.hstack((jnp.ones((N, 1)), phi_z)) if self.offset else phi_z
 
 
-class LegendrePolynomial(AbstractFeatureMap, strict=True):
+class LegendrePolynomial(AbstractFeatureMap):
     """Legendre polynomial feature map.
 
     This class constructs and evaluates Legendre polynomial features up to a
@@ -215,7 +215,7 @@ class LegendrePolynomial(AbstractFeatureMap, strict=True):
         return phi_z if self.offset else phi_z[:, 1:]
 
 
-class ChebyshevPolynomial(AbstractFeatureMap, strict=True):
+class ChebyshevPolynomial(AbstractFeatureMap):
     """Chebyshev polynomial feature map.
 
     This class constructs and evaluates Chebyshev polynomial features of the

@@ -5,17 +5,17 @@ import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
 
-from freq_statespace import _misc
-from freq_statespace._config import PRINT_EVERY, SOLVER, DeviceLike
-from freq_statespace._data_manager import (
+from . import _misc
+from ._config import PRINT_EVERY, SOLVER, DeviceLike
+from ._data_manager import (
     FrequencyData,
     InputOutputData,
     NonparametricBLA,
 )
-from freq_statespace._frequency_response import compute_frequency_response
-from freq_statespace._model_structures import ModelBLA
-from freq_statespace._solve import solve
-from freq_statespace.dep import fsid
+from ._frequency_response import compute_frequency_response
+from ._model_structures import ModelBLA
+from ._solve import solve
+from .dep import fsid
 
 
 MAX_ITER = 1000
@@ -248,7 +248,7 @@ def optimize(
     model = _normalize_states(model, freq)
     theta0_dyn, theta_static = eqx.partition(model, eqx.is_inexact_array)
 
-    args = (theta_static, jnp.asarray(G_bla.G), f_data, W)
+    args =(theta_static, jnp.asarray(G_bla.G), f_data, W)
 
     # Optimize the model parameters
     if logging_enabled:
