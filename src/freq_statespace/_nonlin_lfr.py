@@ -11,7 +11,7 @@ from . import _misc
 from ._config import PRINT_EVERY, SEED, SOLVER, DeviceLike
 from ._data_manager import FrequencyData, InputOutputData
 from ._model_structures import ModelBLA, ModelNonlinearLFR
-from ._solve import BatchedArgs, solve
+from ._solve import solve
 from .static._feature_maps import AbstractFeatureMap
 from .static._nonlin_funcs import (
     AbstractNonlinearFunction,
@@ -45,6 +45,7 @@ class InferenceLearningArgs(eqx.Module):
     Tz_inv: jnp.ndarray  # shape (nz, nz)
     epsilon: float
     N: int
+    recompute_fixed_point: bool
 
 
 class NonlinearOptimizationArgs(eqx.Module):
@@ -109,27 +110,6 @@ def _create_basis_function_model_given_beta(
     )
 
 
-def validate_batch_size(batch_size: int | None, num_realizations: int) -> None:
-    """Validate and possibly warn about suboptimal `batch_size`."""
-    if batch_size is None:
-        return
-
-    if not isinstance(batch_size, int):
-        raise TypeError("`batch_size` must be an integer or None.")
-
-    if not (1 <= batch_size <= num_realizations):
-        raise ValueError(
-            f"`batch_size` must be in [1, {num_realizations}], got {batch_size}."
-        )
-
-    if num_realizations % batch_size != 0:
-        print(
-            f"Warning: number of realizations ({num_realizations}) is not divisible by "
-            f"`batch_size` ({batch_size}). The final partial batch of size "
-            f"{num_realizations % batch_size} won't be used for training."
-        )
-
-
 def _prepare_inference_and_learning(
     bla: ModelBLA,
     data: InputOutputData,
@@ -139,13 +119,9 @@ def _prepare_inference_and_learning(
     fixed_point_iters: int,
     seed: int,
     epsilon: float,
-) -> tuple[ModelNonlinearLFR, BatchedArgs[InferenceLearningArgs]]:
+    recompute_fixed_point: bool
+) -> tuple[ModelNonlinearLFR, InferenceLearningArgs]:
     """Prepare initial guess and function arguments for inference and learning."""
-    def _slice_fn(args: InferenceLearningArgs, idx: slice):
-        freqs, fs, U, Y, G_yu = args.f_data
-        new_f_data = (freqs, fs, U[..., idx], Y[..., idx], G_yu)
-        return eqx.tree_at(lambda leaf: leaf.f_data, args, new_f_data)
-    
     nz = phi.nz
     ny, nx = bla.C_y.shape
     N, nu, R = data.time.u.shape
@@ -179,36 +155,25 @@ def _prepare_inference_and_learning(
     G_yu = bla._frequency_response(f_full)
     f_data = (f_full, 1 / data.time.ts, U, Y, G_yu)
 
-    batch_args = BatchedArgs(
-        args=InferenceLearningArgs(
-            theta_uy=theta_uy,
-            phi=phi,
-            lambda_w=lambda_w,
-            fixed_point_iters=fixed_point_iters,
-            f_data=f_data,
-            Lambda=_compute_weighting_matrix(data.freq),
-            Tz_inv=Tz_inv,
-            epsilon=epsilon,
-            N=N,
-        ),
-        num_realizations=R,
-        slice_fn=_slice_fn,
+    args = InferenceLearningArgs(
+        theta_uy=theta_uy,
+        phi=phi,
+        lambda_w=lambda_w,
+        fixed_point_iters=fixed_point_iters,
+        f_data=f_data,
+        Lambda=_compute_weighting_matrix(data.freq),
+        Tz_inv=Tz_inv,
+        epsilon=epsilon,
+        N=N,
+        recompute_fixed_point=recompute_fixed_point,
     )
-
-    return theta_wz, batch_args
+    return theta_wz, args
 
 
 def _prepare_nonlin_optimization(
     data: InputOutputData, model_init: ModelNonlinearLFR, offset: int
-) -> tuple[ModelNonlinearLFR, BatchedArgs[NonlinearOptimizationArgs]]:
+) -> tuple[ModelNonlinearLFR, NonlinearOptimizationArgs]:
     """Prepare initial guess and function arguments for nonlinear optimization."""
-    def _slice_fn(args: NonlinearOptimizationArgs, idx: slice):
-        return eqx.tree_at(
-            where=lambda leaf: (leaf.u, leaf.Y, leaf.x0),
-            pytree=args,
-            replace=(args.u[..., idx], args.Y[..., idx], args.x0[:, idx]),
-        )
-        
     theta0, theta_static = eqx.partition(model_init, eqx.is_inexact_array)
 
     bla = super(ModelNonlinearLFR, model_init)
@@ -217,20 +182,15 @@ def _prepare_nonlin_optimization(
     x_bla = bla._simulate(data.time.u, offset=data.time.u.shape[0])[1]
     x0 = x_bla[-offset, :, :]
 
-    batch_args = BatchedArgs(
-        args=NonlinearOptimizationArgs(
-            theta_static=theta_static,
-            u=data.time.u,
-            Y=data.freq.Y,
-            Lambda=_compute_weighting_matrix(data.freq),
-            x0=x0,
-            offset=offset,
-        ),
-        num_realizations=data.time.u.shape[2],
-        slice_fn=_slice_fn,
+    args = NonlinearOptimizationArgs(
+        theta_static=theta_static,
+        u=data.time.u,
+        Y=data.freq.Y,
+        Lambda=_compute_weighting_matrix(data.freq),
+        x0=x0,
+        offset=offset,
     )
-
-    return theta0, batch_args
+    return theta0, args
 
 
 def _compute_weighted_residual(
@@ -240,16 +200,16 @@ def _compute_weighted_residual(
 
     Parameters
     ----------
-    Y : jnp.ndarray, shape (N, ny, R)
+    Y : jnp.ndarray, shape (N//2 + 1, ny, R)
         Measured output spectrum, averaged over periods.
-    Y_hat : jnp.ndarray, shape (N, ny, R)
+    Y_hat : jnp.ndarray, shape (N//2 + 1, ny, R)
         Simulated output spectrum.
-    Lambda : jnp.ndarray, shape (F, ny, ny)
+    Lambda : jnp.ndarray, shape (N//2 + 1, ny, ny)
         Weight matrix.
 
     """
-    N, _, R = Y.shape
-    return jnp.sqrt(Lambda / (R * N)) @ (Y - Y_hat)
+    num_freqs, _, R = Y.shape
+    return jnp.sqrt(Lambda / (R * num_freqs)) @ (Y - Y_hat)
 
 
 def _loss_inference_and_learning(theta: ThetaWZ, args: InferenceLearningArgs) -> tuple:
@@ -321,11 +281,17 @@ def _loss_inference_and_learning(theta: ThetaWZ, args: InferenceLearningArgs) ->
         z = jnp.fft.irfft(Z, n=args.N, axis=0)
         z_stacked = jnp.transpose(z, (2, 0, 1)).reshape(args.N * R, nz)
         return args.phi._compute_features(z_stacked)
+    
+    fixed_point_fn = (
+        jax.checkpoint(_fixed_point_iteration)
+        if args.recompute_fixed_point
+        else _fixed_point_iteration
+    )
 
     phi_z = jax.lax.fori_loop(
         0,
         args.fixed_point_iters,
-        _fixed_point_iteration,
+        fixed_point_fn,
         phi_z_star,
         unroll=True
     )
@@ -374,8 +340,8 @@ def inference_and_learning(
     print_every: int = PRINT_EVERY,
     seed: int = SEED,
     epsilon: float = EPSILON,
-    device: DeviceLike = None,
-    batch_size: int | None = None
+    recompute_fixed_point: bool = False,
+    device: DeviceLike = None
 ) -> ModelNonlinearLFR:
     """Perform inference and learning.
 
@@ -408,41 +374,29 @@ def inference_and_learning(
         Random seed for parameter initialization. Defaults to `SEED`.
     epsilon : float
         Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
+    recompute_fixed_point : bool
+        Whether to recompute the fixed-point iterations with during the backward pass.
+        Doing so increases computation time but reduces memory consumption, which can be
+        useful for large-scale problems. Defaults to `False`.
     device : `DeviceLike`, optional
         Device on which to perform the computations. Can be either a device
         name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
         provided, the default JAX device is used.
-    batch_size : int, optional
-        Number of realizations to process in a single batch. Working with smaller 
-        batches is mainly useful to reduce memory consumption for large-scale problems.
-        When the total number of realizations is not divisible by `batch_size`, the 
-        final partial batch is skipped, as compiling it separately would increase memory
-        usage. If not provided, all realizations are processed at once.
-
+        
     Returns
     -------
     `ModelNonlinearLFR`
         Fully initialized NL-LFR model.
-        
-    Raises
-    ------
-    ValueError
-        If `batch_size` is not in `[1, R]`, where `R` is the number of
-        realizations in the data.
-    TypeError
-        If `batch_size` is not an integer or `None`.
 
     """
-    R = data.time.u.shape[2]
-    validate_batch_size(batch_size, R)
-
     logging_enabled = print_every != -1
     if logging_enabled:
         header = " NL-LFR inference and learning  "
         print(f"{header:=^72}")
 
     theta0, args = _prepare_inference_and_learning(
-        bla, data, phi, nw, lambda_w, fixed_point_iters, seed, epsilon
+        bla, data, phi, nw, lambda_w, fixed_point_iters,
+        seed, epsilon, recompute_fixed_point
     )
 
     # Optimize the model parameters
@@ -454,11 +408,10 @@ def inference_and_learning(
 
     solve_result = solve(
         theta0, solver, args, _loss_inference_and_learning,
-        max_iter, print_every, device, batch_size
+        max_iter, print_every, device
     )
 
     scalar_loss, beta = solve_result.aux
-    args = args.args  # unwrap from BatchedArgs
 
     model = ModelNonlinearLFR(
         A=args.theta_uy[0],
@@ -500,8 +453,7 @@ def optimize(
     max_iter: int = MAX_ITER_OPTIMIZATION,
     print_every: int = PRINT_EVERY,
     offset: int | None = None,
-    device: DeviceLike = None,
-    batch_size: int | None = None
+    device: DeviceLike = None
 ) -> ModelNonlinearLFR:
     """Refine the parameters of an NL-LFR model using time-domain simulations.
 
@@ -536,30 +488,13 @@ def optimize(
         Device on which to perform the computations. Can be either a device
         name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
         provided, the default JAX device is used.
-    batch_size : int, optional
-        Number of realizations to process in a single batch. Working with smaller 
-        batches is mainly useful to reduce memory consumption for large-scale problems.
-        When the total number of realizations is not divisible by `batch_size`, the 
-        final partial batch is skipped, as compiling it separately would increase memory
-        usage. If not provided, all realizations are processed at once.
 
     Returns
     -------
     `ModelNonlinearLFR`
         NL-LFR model with optimized parameters.
 
-    Raises
-    ------
-    ValueError
-        If `batch_size` is not in `[1, R]`, where `R` is the number of
-        realizations in the data.
-    TypeError
-        If `batch_size` is not an integer or `None`.
-
     """
-    R = data.time.u.shape[2]
-    validate_batch_size(batch_size, R)
-    
     logging_enabled = print_every != -1
     if logging_enabled:
         header = " NL-LFR optimization  "
@@ -568,7 +503,7 @@ def optimize(
     if offset is None:  # we start 10% 'ahead of time'
         offset = int(np.ceil(0.1 * data.time.u.shape[0]))
 
-    theta0, batch_args = _prepare_nonlin_optimization(data, model, offset)
+    theta0, args = _prepare_nonlin_optimization(data, model, offset)
 
     # Optimize the model parameters
     if logging_enabled:
@@ -578,11 +513,11 @@ def optimize(
             print(f"    BLA loss: {bla_loss:.4e}")
 
     solve_result = solve(
-        theta0, solver, batch_args, _loss_nonlin_optimization, 
-        max_iter, print_every, device, batch_size
+        theta0, solver, args, _loss_nonlin_optimization, 
+        max_iter, print_every, device
     )
 
-    model = eqx.combine(solve_result.theta, batch_args.args.theta_static)
+    model = eqx.combine(solve_result.theta, args.theta_static)
 
     if logging_enabled:
         _misc.evaluate_model_performance(

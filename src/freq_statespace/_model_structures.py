@@ -318,6 +318,7 @@ class ModelNonlinearLFR(ModelBLA):
             jnp.zeros((N, nw, R)),  # W_accum
             jnp.zeros((N, nz, R)),  # Z_accum
         )
+        
         Y, X, W, Z = jax.lax.fori_loop(0, N, _make_step, loop_init)[1:]
         return (Y[offset:, ...], X[offset:, ...], W[offset:, ...], Z[offset:, ...])
 
