@@ -33,7 +33,11 @@ class ModelBLA(eqx.Module):
     norm: Normalizer = eqx.field(static=True)
 
     def _simulate(
-        self, u: np.ndarray, *, offset: int = 0, x0: np.ndarray | None = None
+        self,
+        u: np.ndarray,
+        *,
+        offset: int = 0,
+        x0: np.ndarray | None = None
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Simulate the BLA model in the time domain.
 
@@ -174,10 +178,7 @@ class ModelBLA(eqx.Module):
 
         return np.asarray(y), t, np.asarray(x)
 
-    def _frequency_response(
-        self,
-        f: np.ndarray,
-    ) -> jnp.ndarray:
+    def _frequency_response(self, f: np.ndarray) -> jnp.ndarray:
         """Compute the frequency response of the system.
 
         To be used within an optimization loop, as it assumes normalized data.
@@ -235,7 +236,11 @@ class ModelNonlinearLFR(ModelBLA):
     func_static: AbstractNonlinearFunction
 
     def _simulate(
-        self, u: np.ndarray, *, offset: int = 0, x0: np.ndarray | None = None
+        self,
+        u: np.ndarray,
+        *,
+        offset: int = 0,
+        x0: np.ndarray | None = None
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """Simulate the NL-LFR model in the time domain.
 

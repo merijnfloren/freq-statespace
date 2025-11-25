@@ -1,5 +1,4 @@
 """Nonparametric BLA, parametric subspace identification, and optimizer."""
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -59,6 +58,22 @@ def _normalize_states(model: ModelBLA, freq: FrequencyData) -> ModelBLA:
         C_y=model.C_y @ Tx, D_yu=model.D_yu,
         ts=model.ts, norm=model.norm,
     )
+    
+    
+def _validate_weighting(
+    weighting_enabled: bool,
+    var_tot: jnp.ndarray | None,
+    print_warning: bool
+) -> bool:
+    """Check if weighting can be applied based on BLA total variance availability."""
+    if weighting_enabled and var_tot is None:
+        if print_warning:
+            print(
+                "Warning: Frequency weighting based on BLA total variance requested, "
+                "but such estimate is not available. Proceeding without weighting."
+            )
+        weighting_enabled = False
+    return weighting_enabled
 
 
 def compute_nonparametric(U: np.ndarray, Y: np.ndarray) -> NonparametricBLA:
@@ -113,6 +128,7 @@ def subspace_id(
     data: InputOutputData,
     nx: int,
     nq: int | None = None,
+    weighting_enabled: bool = True,
     logging_enabled: bool = True
 ) -> ModelBLA:
     """Parametrize a state-space model using the frequency-domain subspace method.
@@ -126,6 +142,9 @@ def subspace_id(
     nq : int | None, optional
         Subspace dimensioning parameter, must be greater than `nx`. Defaults to
         `nx + 1` if not provided.
+    weighting_enabled : bool
+        Whether to use frequency weighting based on the inverse of the total variance
+        on the nonparametric BLA. Defaults to `True`.
     logging_enabled : bool
         Whether to print a summary of the identification results. Defaults to `True`.
 
@@ -157,6 +176,10 @@ def subspace_id(
 
     G_bla = freq.G_bla
     F, ny, nu = G_bla.G.shape
+    
+    weighting_enabled = _validate_weighting(
+        weighting_enabled, G_bla.var_tot, logging_enabled
+    )
 
     # Convert BLA to input-output form for FSID algorithm compatibility
     Y = np.transpose(G_bla.G, (0, 2, 1)).reshape(nu * F, ny)
@@ -164,7 +187,7 @@ def subspace_id(
     zj = np.repeat(np.exp(z * 1j), nu)
 
     # Create weighting matrix (inverse of total variance)
-    if G_bla.var_tot is not None:
+    if weighting_enabled:
         W_temp = 1 / G_bla.var_tot
 
         # The four lines below are to ensure compatibility with fsid.gfdsid
@@ -197,6 +220,7 @@ def optimize(
     data: InputOutputData,
     *,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
+    weighting_enabled: bool = True,
     max_iter: int = MAX_ITER,
     print_every: int = PRINT_EVERY,
     device: DeviceLike = None,
@@ -212,6 +236,9 @@ def optimize(
     solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
         Any least-squares solver or general minimization solver from the
         Optimistix or Optax libraries. Defaults to `SOLVER`.
+    weighting_enabled : bool
+        Whether to use frequency weighting based on the inverse of the total variance
+        on the nonparametric BLA. Defaults to `True`.
     max_iter : int
         Maximum number of optimization iterations. Defaults to `MAX_ITER`.
     print_every : int
@@ -238,9 +265,14 @@ def optimize(
     freq = data.freq
     G_bla = freq.G_bla
     f_data = freq.f[freq.f_idx]
+    
+    print_warning = print_every != -1
+    weighting_enabled = _validate_weighting(
+        weighting_enabled, G_bla.var_tot, print_warning
+    )
 
     # Create weighting matrix (inverse of total variance)
-    if G_bla.var_tot is not None:
+    if weighting_enabled:
         W = 1 / G_bla.var_tot
     else:
         W = jnp.ones_like(G_bla.G)
