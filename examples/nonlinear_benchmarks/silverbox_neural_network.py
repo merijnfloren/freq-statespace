@@ -19,6 +19,6 @@ neural_net = fss.static.NeuralNetwork(
 nllfr = fss.nonlin.connect(bla, neural_net)
 nllfr = fss.nonlin.optimize(nllfr, data, device="cpu")
 
-# NOTE: CPU is faster here because the optimization problem is recurrent in nature
+# NOTE: My CPU is faster here because the optimization problem is recurrent in nature
 # and has very little work per step, so GPU overhead dominates. Larger models perform 
 # enough computation per step for GPUs to become advantageous.

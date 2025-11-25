@@ -207,13 +207,19 @@ def _prepare_nonlin_optimization(
 
     bla = super(ModelNonlinearLFR, model_init)
 
-    # Select the initial state from steady-state BLA simulations
-    x_bla = bla._simulate(data.time.u, offset=data.time.u.shape[0])[1]
+    # To select the initial state, we first ensure steady-state BLA simulations 
+    # by prepending two periods of input data
+    length_two_periods = 2 * data.time.u.shape[0]
+    u_ext = _misc.extend_signal(data.time.u, length_two_periods)
+    x_bla = bla._simulate(u_ext)[1]
+    # Next, discard the two periods that contain transients
+    x_bla = x_bla[length_two_periods:, :, :] 
+    # Finally, select the initial state from steady-state simulations
     x0 = x_bla[-offset, :, :]
 
     args = NonlinearOptimizationArgs(
         theta_static=theta_static,
-        u=data.time.u,
+        u=_misc.extend_signal(data.time.u, offset) if offset > 0 else data.time.u, 
         Y=data.freq.Y,
         Lambda=_compute_weighting_matrix(data.freq, weighting_enabled),
         x0=x0,
@@ -348,7 +354,8 @@ def _loss_nonlin_optimization(
     theta = eqx.combine(theta, args.theta_static)
 
     # Simulate the model in time domain
-    y_hat = theta._simulate(args.u, offset=args.offset, x0=args.x0)[0]
+    y_hat = theta._simulate(args.u, x0=args.x0)[0]
+    y_hat = y_hat[args.offset:, ...]  # discard offset samples
     Y_hat = jnp.fft.rfft(y_hat, axis=0)
 
     # Compute loss
@@ -403,8 +410,8 @@ def inference_and_learning(
         Maximum number of optimization iterations. Defaults to
         `MAX_ITER_INFERENCE_AND_LEARNING`.
     print_every : int
-        Frequency of printing iteration information. If set to 0, only a
-        summary is printed. If set to -1, no printing is done. Defaults to
+        Frequency of printing iteration information. If set to `0`, only a
+        summary is printed. If set to `-1`, no printing is done. Defaults to
         `PRINT_EVERY`.
     seed : int
         Random seed for parameter initialization. Defaults to `SEED`.
@@ -470,9 +477,12 @@ def inference_and_learning(
         _misc.evaluate_model_performance(model, data, solve_result=solve_result)
 
         # Compute recursive loss of the NL-LFR model to check consistency with the
-        # inference and learning solution. We simulate 2 periods and discard the
-        # first one to ensure that transients have died out (see `offset`)
-        y_hat = model._simulate(data.time.u, offset=data.time.u.shape[0])[0]
+        # inference and learning solution. We prepend 2 periods and subsequently discard
+        # those to ensure that transients have died out (see `offset`)
+        offset = 2 * data.time.u.shape[0]
+        u_ext = _misc.extend_signal(data.time.u, offset)
+        y_hat = model._simulate(u_ext)[0]
+        y_hat = y_hat[offset:, ...]
         Y_hat = jnp.fft.rfft(y_hat, axis=0)
         loss_recursive = _compute_weighted_residual(data.freq.Y, Y_hat, args.Lambda)
         scalar_loss_recursive = jnp.sum(jnp.abs(loss_recursive) ** 2)
@@ -512,8 +522,8 @@ def optimize(
     max_iter : int
         Maximum number of optimization iterations. Defaults to `MAX_ITER_OPTIMIZATION`.
     print_every : int
-        Frequency of printing iteration information. If set to 0, only a
-        summary is printed. If set to -1, no printing is done. Defaults to
+        Frequency of printing iteration information. If set to `0`, only a
+        summary is printed. If set to `-1`, no printing is done. Defaults to
         `PRINT_EVERY`.
     offset : int, optional
         A non-negative integer `≤ N`. This value is used to select
@@ -522,10 +532,10 @@ def optimize(
         simulations as `x0 = x_bla[-offset, :, :]`. The number of input samples
         are prepended accordingly. This warm-up ensures the system reaches
         steady-state before the main period begins, allowing for leakage-free
-        DFT computations (the prepended samples are discarded). This approach
+        DFT computations (the prepended samples are later discarded). This approach
         is valid because the data is assumed to be periodic. Defaults to 10% of 
         the data length if not provided.
-        epsilon : float
+    epsilon : float
         Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
     device : `DeviceLike`, optional
         Device on which to perform the computations. Can be either a device
@@ -546,7 +556,7 @@ def optimize(
     weighting_enabled = _validate_weighting(
         weighting_enabled, data.freq.Y_var_noise, logging_enabled)
 
-    if offset is None:  # we start 10% 'ahead of time'
+    if offset is None:  # we start 10% "ahead of time"
         offset = int(np.ceil(0.1 * data.time.u.shape[0]))
 
     theta0, args = _prepare_nonlin_optimization(data, model, offset, weighting_enabled)
@@ -569,7 +579,7 @@ def optimize(
 
     if logging_enabled:
         _misc.evaluate_model_performance(
-            model, data, solve_result=solve_result, offset=offset
+            model, data, solve_result=solve_result, offset=offset, x0=args.x0
         )
 
     return model

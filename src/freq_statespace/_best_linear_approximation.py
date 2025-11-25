@@ -242,8 +242,8 @@ def optimize(
     max_iter : int
         Maximum number of optimization iterations. Defaults to `MAX_ITER`.
     print_every : int
-        Frequency of printing iteration information. If set to 0, only a
-        summary is printed. If set to -1, no printing is done. Defaults to
+        Frequency of printing iteration information. If set to `0`, only a
+        summary is printed. If set to `-1`, no printing is done. Defaults to
         `PRINT_EVERY`.
     device : `DeviceLike`, optional
         Device on which to perform the computations. Can be either a device

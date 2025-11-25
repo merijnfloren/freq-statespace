@@ -27,7 +27,7 @@ nllfr = fss.nonlin.inference_and_learning(
 # Step 3: Nonlinear optimization
 nllfr = fss.nonlin.optimize(nllfr, data, device="cpu")
 
-# NOTE: CPU is faster here because the optimization problem is recurrent in nature
+# NOTE: My CPU is faster here because the optimization problem is recurrent in nature
 # and has very little work per step, so GPU overhead dominates. Larger models perform 
 # enough computation per step for GPUs to become advantageous.
 
@@ -43,17 +43,17 @@ test_multisine, test_arrow_full, test_arrow_no_extrapolation = test
 # -- Multisine test --
 y_model = nllfr.simulate(test_multisine.u)[0]
 n = test_multisine.state_initialization_window_length
-rmse_ms = RMSE(test_multisine.y[n:], y_model[n:])
+rmse_ms = RMSE(test_multisine.y[n:], y_model[n:].flatten())
 print(f"\nRMSE on multisine test: {1000 * rmse_ms:.3e} mV")
 
 # -- Arrowhead full --
 y_model = nllfr.simulate(test_arrow_full.u)[0]
 n = test_arrow_full.state_initialization_window_length
-rmse_af = RMSE(test_arrow_full.y[n:], y_model[n:])
+rmse_af = RMSE(test_arrow_full.y[n:], y_model[n:].flatten())
 print(f"RMSE on arrowhead full test: {1000 * rmse_af:.3e} mV")
 
 # -- Arrowhead no extrapolation --
 y_model = nllfr.simulate(test_arrow_no_extrapolation.u)[0]
 n = test_arrow_no_extrapolation.state_initialization_window_length
-rmse_an = RMSE(test_arrow_no_extrapolation.y[n:], y_model[n:])
+rmse_an = RMSE(test_arrow_no_extrapolation.y[n:], y_model[n:].flatten())
 print(f"RMSE on arrowhead no extrapolation: {1000 * rmse_an:.3e} mV")

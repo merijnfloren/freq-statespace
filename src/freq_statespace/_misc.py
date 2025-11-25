@@ -1,6 +1,7 @@
 """Miscellaneous utility functions."""
 
 import jax
+import jax.numpy as jnp
 import nonlinear_benchmarks
 import numpy as np
 
@@ -10,7 +11,14 @@ from ._solve import SolveResult
 
 
 def load_and_preprocess_silverbox_data() -> InputOutputData:
-    """Load (from `nonlinear_benchmarks`) and preprocesses the Silverbox dataset."""
+    """Load (from `nonlinear_benchmarks`) and preprocesses the Silverbox dataset.
+    
+    Returns
+    -------
+    data : `InputOutputData`
+        Preprocessed Silverbox training data.
+
+    """
     train = nonlinear_benchmarks.Silverbox()[0]
     u, y = train.u, train.y
 
@@ -52,12 +60,40 @@ def load_and_preprocess_silverbox_data() -> InputOutputData:
     return create_data_object(u_train, y_train, f_idx, fs)
 
 
+def extend_signal(u: jnp.ndarray, offset: int) -> jnp.ndarray:
+    """Extend input signal by prepending last `offset` samples.
+
+    Parameters
+    ----------
+    u : jnp.ndarray, shape (N, nu, R)
+        Input signal.
+    offset : int
+        Number of samples to prepend.
+
+    Returns
+    -------
+    u_ext : jnp.ndarray, shape (N + offset, nu, R)
+        Extended input signal.
+
+    """
+    N = u.shape[0]
+    repeats = (offset // N) + 1
+    remainder = offset % N
+    
+    u_ext = jnp.tile(u, (repeats, 1, 1))
+    if remainder > 0:
+        u_ext = jnp.concatenate((u[-remainder:, ...], u_ext), axis=0)
+    
+    return u_ext
+
+
 def evaluate_model_performance(
     model: ModelBLA | ModelNonlinearLFR,
     data: InputOutputData,
     *,
     solve_result: SolveResult | None = None,
     offset: int | None = None,
+    x0: jnp.ndarray | None = None
 ) -> None:
     """Simulate model and prints NRMSEs, along with solver timings (if provided).
 
@@ -71,37 +107,39 @@ def evaluate_model_performance(
         Result of the model solving process, containing timing and loss
         information.
     offset : int, optional
-        A non-negative integer `≤ N`. This value is used to select
-        the unknown initial state of the time-domain simulations. Specifically,
-        the initial state is selected from the steady-state BLA state
-        simulations as `x0 = x_bla[-offset, :, :]`. The number of input samples
-        are prepended accordingly.  If `offset` is not specified, two entire
-        periods are simulated from zero initial state. The first period is
-        then discarded when computing the NRMSE.
+        A non-negative integer representing the number of initial samples to
+        prepend to the input signal to allow the system to reach steady-state before
+        the main simulations begin. Those samples are not included in the final output
+        comparison. If not provided, two entire periods are prepended.
+    x0 : jnp.ndarray of shape (nx, R), optional
+        Initial state of the simulations. If `offset` is also provided, the simulation 
+        first prepends the `offset` input samples; `x0` then refers to the initial state
+        of the offset samples. If not provided, the simulation starts from a zero state.
+        
+    Raises
+    ------
+    TypeError
+        If `model` is not of type `ModelBLA` or `ModelNonlinearLFR`.
 
     """
     if not isinstance(model, ModelBLA | ModelNonlinearLFR):
         raise TypeError("`model` must be either `ModelBLA` or `ModelNonlinearLFR`.")
 
     u, y = data.time.u, data.time.y
-    N, ny = y.shape[:2]
+    N, ny, R = y.shape
 
     # Determine offset and initial state
     if offset is None:
-        offset = N
-        x0 = None
-    else:
-        if isinstance(model, ModelNonlinearLFR):
-            bla = super(ModelNonlinearLFR, model)
-        else:
-            bla = model
-
-        # Obtain steady-state BLA state simulations
-        x_bla = bla._simulate(u, offset=N)[1]
-        x0 = x_bla[-offset, :, :]
-
+        offset = 2 * N  # prepend two entire periods
+    if x0 is None:
+        x0 = jnp.zeros((model.A.shape[0], R))
+        
+    if offset > 0:
+        u = extend_signal(u, offset)
+        
     # Simulate model
-    y_sim = model._simulate(u, offset=offset, x0=x0)[0]
+    y_sim = model._simulate(u, x0=x0)[0]
+    y_sim = y_sim[offset:, ...]  # discard offset samples
 
     # Compute NRMSE per output channel
     error = y - y_sim
@@ -134,6 +172,20 @@ def evaluate_model_performance(
 
 
 def get_key(seed: int, tag: str) -> jax.Array:
-    """Generate a deterministic key from a base seed and a tag."""
+    """Generate a deterministic key from a base seed and a tag.
+    
+    Parameters
+    ----------
+    seed : int
+        Base seed.
+    tag : str
+        Tag to differentiate keys.
+        
+    Returns
+    -------
+    key : jax.Array
+        A new random key that is a deterministic function of the inputs.
+
+    """
     tag = hash(tag) & 0xFFFFFFFF  # ensure it's in 32-bit range
     return jax.random.fold_in(jax.random.key(seed), tag)

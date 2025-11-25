@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from . import _misc
 from ._data_manager import Normalizer
 from .static._nonlin_funcs import AbstractNonlinearFunction
 
@@ -36,7 +37,6 @@ class ModelBLA(eqx.Module):
         self,
         u: np.ndarray,
         *,
-        offset: int = 0,
         x0: np.ndarray | None = None
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Simulate the BLA model in the time domain.
@@ -50,11 +50,6 @@ class ModelBLA(eqx.Module):
             - N: number of time steps
             - nu: number of inputs
             - R: number of realizations
-        offset : int
-            Non-negative integer, must be `≤ N`. If greater than 0, the last
-            `offset` input samples are prepended before the simulation starts.
-            These prepended samples are used for simulation warm-up and are not
-            included in the returned tuple.
         x0 : jnp.ndarray of shape (nx, R), optional
             Initial state of the system. If not provided, the simulation starts
             from a zero state. If `offset > 0`, the simulation first prepends
@@ -72,11 +67,6 @@ class ModelBLA(eqx.Module):
         Z : jnp.ndarray, of shape (N, nz, R)
             Static nonlinear function inputs.
 
-        Raises
-        ------
-        ValueError
-            If `offset` is not a non-negative integer `≤ N`.
-
         """
         def _make_step(k, state):
             X, Y_accum, X_accum = state
@@ -86,17 +76,6 @@ class ModelBLA(eqx.Module):
             X_next = self.A @ X + self.B_u @ U
             Y = self.C_y @ X + self.D_yu @ U
             return X_next, Y_accum.at[k, ...].set(Y), X_accum.at[k, ...].set(X)
-
-        # Validate offset
-        if not isinstance(offset, int) or offset < 0 or offset > u.shape[0]:
-            raise ValueError(
-                f"'offset' must be a non-negative integer smaller"
-                f" or equal to N (={u.shape[0]}), got {offset}."
-            )
-
-        # Extend input signal if needed
-        if offset > 0:
-            u = jnp.concatenate((u[-offset:, ...], u), axis=0)
 
         N, nu, R = u.shape
         ny, nx = self.C_y.shape
@@ -110,73 +89,69 @@ class ModelBLA(eqx.Module):
             jnp.zeros((N, nx, R)),  # X_accum
         )
         Y, X = jax.lax.fori_loop(0, N, _make_step, loop_init)[1:]
-        return Y[offset:, ...], X[offset:, ...]
+        return Y, X
 
     def simulate(
         self,
         u: np.ndarray,
         *,
         x0: np.ndarray | None = None,
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """Simulate the BLA model in the time domain.
+        offset: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Simulate the BLA model in the time domain for arbitrary input signals.
 
         Parameters
         ----------
-        u : np.ndarray, shape (N, nu) or (N,)
-            Input signal of shape (N, nu). If the system has only one input
-            channel, `u` may be a 1D array of shape (N,).
-        x0 : np.ndarray, shape (nx,), optional
-            Initial state of the system. If not provided, the initial state is
+        u : np.ndarray, shape (N,), (N, nu), (N, nu, R), or (N, nu, R, P)
+            Input signal. This array can be 1D up to 4D, with:
+            - N : number of time steps  
+            - nu: number of inputs  
+            - R : number of realizations  
+            - P : number of periods  
+
+            The input does not need to be normalized; this is handled internally.
+            Since this is a public method (not used within an optimization loop), 
+            the input also does not need to be periodic.
+
+            If the fourth dimension P is provided, it is assumed that the input is
+            periodic. In that case, all periods are internally concatenated into
+            the first dimension, effectively simulating multiple periods sequentially.
+
+        x0 : np.ndarray, shape (nx,) or (nx, R), optional
+            Initial state for simulation. If not provided, the initial state is
             assumed to be zero.
+
+        offset : int, optional
+            Should only be provided if the input signal `u` is periodic. A non-negative
+            integer representing the number of initial samples to prepend to the input
+            signal to allow the system to reach steady-state before the main simulations
+            begin. Those samples are not returned. If not provided, no samples are 
+            prepended.
 
         Returns
         -------
-        y : np.ndarray, shape (N, ny) or (N,)
-            Simulated output trajectories. Shape is (N,) in case `ny == 1`.
+        y : np.ndarray, shape (N, ny), (N, ny, R), or (N, ny, R, P)
+            Simulated output time series, at least 2D, with ny as the number of
+            output channels.
+
         t : np.ndarray, shape (N,)
-            Time vector corresponding to the simulation.
-        x : np.ndarray, shape (N, nx) or (N,)
-            Simulated state trajectories. Shape is (N,) in case `nx == 1`.
+            Time vector corresponding to one simulation of length N.
+
+        x : np.ndarray, shape (N, nx), (N, nx, R), or (N, nx, R, P)
+            Simulated state trajectories, at least 2D, with nx as the number of
+            state variables.
+
+        Raises
+        ------
+        ValueError
+            If `u` has an invalid shape.
+        ValueError
+            If `x0` has an invalid shape.
+        ValueError
+            If `offset` is not a non-negative integer.
 
         """
-        # Validate if `u` is 1D or 2D, then extend to 3D
-        if u.ndim == 1:
-            u = u[:, None, None]
-        elif u.ndim == 2:
-            u = u[:, :, None]
-        else:
-            raise ValueError(f"`u` must be 1D or 2D, got {u.ndim}D.")
-
-        # Validate initial state
-        if x0 is not None:
-            if x0.ndim != 1:
-                raise ValueError(f"`x0` must be 1D, got {x0.ndim}D.")
-            if x0.shape[0] != self.A.shape[0]:
-                raise ValueError(
-                    f"`x0` must have shape ({self.A.shape[0]},), got {x0.shape}."
-                )
-            x0 = x0.reshape(-1, 1)
-        else:
-            x0 = jnp.zeros((self.A.shape[0], 1))
-
-        # Normalize input signal
-        u_mean = self.norm.u_mean.reshape(1, -1)
-        u_std = self.norm.u_std.reshape(1, -1)
-        u = (u - u_mean) / u_std
-
-        u = jnp.asarray(u)
-        y, x = self._simulate(u, offset=0, x0=x0)
-
-        # Denormalize output signal
-        y_mean = self.norm.y_mean.reshape(1, -1, 1)
-        y_std = self.norm.y_std.reshape(1, -1, 1)
-        y = y * y_std + y_mean
-
-        y, x = jnp.squeeze(y), jnp.squeeze(x)
-
-        t = np.arange(y.shape[0]) * self.ts
-
-        return np.asarray(y), t, np.asarray(x)
+        return _simulate_core(self, u, x0=x0, offset=offset, with_wz=False)
 
     def _frequency_response(self, f: np.ndarray) -> jnp.ndarray:
         """Compute the frequency response of the system.
@@ -185,13 +160,13 @@ class ModelBLA(eqx.Module):
 
         Parameters
         ----------
-        f : np.ndarray, shape (F_f,)
+        f : np.ndarray, shape (freqs,)
             Frequency points in Hz.
 
         Returns
         -------
         G : jnp.ndarray
-            Frequency response matrix of shape (F_f, ny, nu).
+            Frequency response matrix of shape (freqs, ny, nu).
 
         """
         def G(k):
@@ -239,7 +214,6 @@ class ModelNonlinearLFR(ModelBLA):
         self,
         u: np.ndarray,
         *,
-        offset: int = 0,
         x0: np.ndarray | None = None
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """Simulate the NL-LFR model in the time domain.
@@ -253,11 +227,6 @@ class ModelNonlinearLFR(ModelBLA):
             - N: number of time steps
             - nu: number of inputs
             - R: number of realizations
-        offset : int
-            Non-negative integer, must be `≤ N`. If greater than 0, the last
-            `offset` input samples are prepended before the simulation starts.
-            These prepended samples are used for simulation warm-up and are not
-            included in the returned tuple.
         x0 : jnp.ndarray of shape (nx, R), optional
             Initial state of the system. If not provided, the simulation starts
             from a zero state. If `offset > 0`, the simulation first prepends
@@ -274,11 +243,6 @@ class ModelNonlinearLFR(ModelBLA):
             Static nonlinear function outputs.
         Z : jnp.ndarray, of shape (N, nz, R)
             Static nonlinear function inputs.
-
-        Raises
-        ------
-        ValueError
-            If `offset` is not a non-negative integer `≤ N`.
 
         """
         def _make_step(k, state):
@@ -298,17 +262,6 @@ class ModelNonlinearLFR(ModelBLA):
                 Z_accum.at[k, ...].set(Z),
             )
 
-        # Validate offset
-        if not isinstance(offset, int) or offset < 0 or offset > u.shape[0]:
-            raise ValueError(
-                f"'offset' must be a non-negative integer smaller"
-                f" or equal to N (={u.shape[0]}), got {offset}."
-            )
-
-        # Extend input signal if needed
-        if offset > 0:
-            u = jnp.concatenate((u[-offset:, ...], u), axis=0)
-
         N, nu, R = u.shape
         nz, nx = self.C_z.shape
         ny, nw = self.D_yw.shape
@@ -325,77 +278,76 @@ class ModelNonlinearLFR(ModelBLA):
         )
         
         Y, X, W, Z = jax.lax.fori_loop(0, N, _make_step, loop_init)[1:]
-        return (Y[offset:, ...], X[offset:, ...], W[offset:, ...], Z[offset:, ...])
+        return Y, X, W, Z
 
     def simulate(
         self,
         u: np.ndarray,
         *,
         x0: np.ndarray | None = None,
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """Simulate the NL-LFR model in the time domain.
+        offset: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Simulate the BLA model in the time domain for arbitrary input signals.
 
         Parameters
         ----------
-        u : np.ndarray, shape (N, nu) or (N,)
-            Input signal of shape (N, nu). If the system has only one input
-            channel, `u` may be a 1D array of shape (N,).
-        x0 : np.ndarray, shape (nx,), optional
-            Initial state of the system. If not provided, the initial state is
+        u : np.ndarray, shape (N,), (N, nu), (N, nu, R), or (N, nu, R, P)
+            Input signal. This array can be 1D up to 4D, with:
+            - N : number of time steps  
+            - nu: number of inputs  
+            - R : number of realizations  
+            - P : number of periods  
+
+            The input does not need to be normalized; this is handled internally.
+            Since this is a public method (not used within an optimization loop), 
+            the input also does not need to be periodic.
+
+            If the fourth dimension P is provided, it is assumed that the input is
+            periodic. In that case, all periods are internally concatenated into
+            the first dimension, effectively simulating multiple periods sequentially.
+
+        x0 : np.ndarray, shape (nx,) or (nx, R), optional
+            Initial state for simulation. If not provided, the initial state is
             assumed to be zero.
+
+        offset : int, optional
+            Should only be provided if the input signal `u` is periodic. A non-negative
+            integer representing the number of initial samples to prepend to the input
+            signal to allow the system to reach steady-state before the main simulations
+            begin. Those samples are not returned. If not provided, no samples are 
+            prepended.
 
         Returns
         -------
-        y : np.ndarray, shape (N, ny) or (N,)
-            Simulated output trajectories. Shape is (N,) in case `ny == 1`.
+        y : np.ndarray, shape (N, ny), (N, ny, R), or (N, ny, R, P)
+            Simulated output time series, at least 2D, with ny as the number of
+            output channels.
+
         t : np.ndarray, shape (N,)
-            Time vector corresponding to the simulation.
-        x : np.ndarray, shape (N, nx) or (N,)
-            Simulated state trajectories. Shape is (N,) in case `nx == 1`.
-        w : np.ndarray, shape (N, nw), or (N,)
-            Static nonlinear function outputs. Shape is (N,) in case `nw == 1`.
-        z : np.ndarray, shape (N, nz) or (N,)
-            Static nonlinear function inputs. Shape is (N,) in case `nz == 1`.
+            Time vector corresponding to one simulation of length N.
+
+        x : np.ndarray, shape (N, nx), (N, nx, R), or (N, nx, R, P)
+            Simulated state trajectories, at least 2D, with nx as the number of
+            state variables.
+        w : np.ndarray, shape (N, nw), (N, nw, R), or (N, nw, R, P)
+            Simulated static nonlinear function outputs, at least 2D, with nw as
+            the number of static nonlinear outputs.
+        z : np.ndarray, shape (N, nz), (N, nz, R), or (N, nz, R, P)
+            Simulated static nonlinear function inputs, at least 2D, with nz as
+            the number of static nonlinear inputs.
+
+        Raises
+        ------
+        ValueError
+            If `u` has an invalid shape.
+        ValueError
+            If `x0` has an invalid shape.
+        ValueError
+            If `offset` is not a non-negative integer.
 
         """
-        # Validate if `u` is 1D or 2D, then extend to 3D
-        if u.ndim == 1:
-            u = u[:, None, None]
-        elif u.ndim == 2:
-            u = u[:, :, None]
-        else:
-            raise ValueError(f"`u` must be 1D or 2D, got {u.ndim}D.")
-
-        # Validate initial state
-        if x0 is not None:
-            if x0.ndim != 1:
-                raise ValueError(f"`x0` must be 1D, got {x0.ndim}D.")
-            if x0.shape[0] != self.A.shape[0]:
-                raise ValueError(
-                    f"`x0` must have shape ({self.A.shape[0]},), got {x0.shape}."
-                )
-            x0 = x0.reshape(-1, 1)
-        else:
-            x0 = jnp.zeros((self.A.shape[0], 1))
-
-        # Normalize input signal
-        u_mean = self.norm.u_mean.reshape(1, -1)
-        u_std = self.norm.u_std.reshape(1, -1)
-        u = (u - u_mean) / u_std
-
-        y, x, w, z = self._simulate(u, offset=0, x0=x0)
-
-        # Denormalize output signal
-        y_mean = self.norm.y_mean.reshape(1, -1, 1)
-        y_std = self.norm.y_std.reshape(1, -1, 1)
-        y = y * y_std + y_mean
-
-        y, x = jnp.squeeze(y), jnp.squeeze(x)
-        w, z = jnp.squeeze(w), jnp.squeeze(z)
-
-        t = np.arange(y.shape[0]) * self.ts
-
-        return np.asarray(y), t, np.asarray(x), np.asarray(w), np.asarray(z)
+        y, t, x, w, z = _simulate_core(self, u, x0=x0, offset=offset, with_wz=True)
+        return y, t, x, w, z
 
     def num_parameters(self) -> int:
         """Return the total number of model parameters."""
@@ -403,3 +355,131 @@ class ModelNonlinearLFR(ModelBLA):
             self.B_w.size + self.C_z.size + self.D_yw.size + self.D_zu.size
             + super().num_parameters() + self.func_static.num_parameters
         )
+        
+        
+def _simulate_core(
+    model: ModelBLA | ModelNonlinearLFR,
+    u: np.ndarray,
+    *,
+    x0: np.ndarray | None,
+    offset: int | None,
+    with_wz: bool,
+):
+    """Simulate either a BLA or NL-LFR model for arbitrary input signals."""
+    _validate_user_inputs(model, u, offset, x0)
+
+    # Remember original dimensionality
+    u_dim = u.ndim
+
+    # Ensure `u` is 4D: (N, nu, R, P)
+    u = u.reshape(u.shape + (1,) * (4 - u.ndim))
+    N, nu, R, P = u.shape
+
+    # Stack periods into the first dimension: (N * P, nu, R)
+    u = jnp.transpose(u, (0, 3, 1, 2)).reshape(N * P, nu, R, order="F")
+
+    # Optional offset extension (periodic case)
+    if offset is not None:
+        u = _misc.extend_signal(u, offset)
+
+    # Initial state
+    nx = model.A.shape[0]
+    x0 = jnp.zeros((nx, R)) if x0 is None else jnp.asarray(x0)
+
+    # Normalize input
+    u_mean = model.norm.u_mean.reshape(1, -1, 1)
+    u_std = model.norm.u_std.reshape(1, -1, 1)
+    u = (u - u_mean) / u_std
+
+    u = jnp.asarray(u)
+
+    # Call model-specific simulator
+    if with_wz:
+        y, x, w, z = model._simulate(u, x0=x0)
+    else:
+        y, x = model._simulate(u, x0=x0)
+        w = z = None
+
+    # Remove offset samples from outputs
+    if offset is not None:
+        y = y[offset:, ...]
+        x = x[offset:, ...]
+        if with_wz:
+            w = w[offset:, ...]
+            z = z[offset:, ...]
+
+    # Denormalize output
+    y_mean = model.norm.y_mean.reshape(1, -1, 1)
+    y_std = model.norm.y_std.reshape(1, -1, 1)
+    y = y * y_std + y_mean
+
+    # Helper to reshape back to match input structure
+    def _reshape_back(arr):
+        arr = jnp.reshape(arr, (N, P, -1, R), order="F").transpose((0, 2, 3, 1))
+        if u_dim in (1, 2):
+            arr = jnp.squeeze(arr, axis=(2, 3))
+        elif u_dim == 3:
+            arr = jnp.squeeze(arr, axis=3)
+        return arr
+
+    y = _reshape_back(y)
+    x = _reshape_back(x)
+    if with_wz:
+        w = _reshape_back(w)
+        z = _reshape_back(z)
+
+    t = np.arange(y.shape[0]) * model.ts
+
+    if with_wz:
+        return np.asarray(y), t, np.asarray(x), np.asarray(w), np.asarray(z)
+    else:
+        return np.asarray(y), t, np.asarray(x)
+
+
+def _validate_user_inputs(
+    model: ModelBLA | ModelNonlinearLFR,
+    u: np.ndarray | jnp.ndarray,
+    offset: int | None,
+    x0: jnp.ndarray | None,
+) -> None:
+    
+    if u.ndim != 1 and u.ndim != 2 and u.ndim != 3 and u.ndim != 4:
+        raise ValueError(f"`u` must have 1 to 4 dimensions, got {u.ndim}D.")
+    
+    if x0 is not None:
+        # Check if 1D or 2D
+        if x0.ndim != 1 and x0.ndim != 2:
+            raise ValueError(f"`x0` must be 1D or 2D, got {x0.ndim}D.")
+        
+        # Check consistency with `u`
+        if u.ndim >= 3:
+            if x0.ndim == 1:
+                raise ValueError(
+                    "`x0` must be 2D to match number of realizations in `u`."
+                )
+            if u.shape[2] != x0.shape[-1]:
+                raise ValueError(
+                    f"`x0` has {x0.shape[-1]} realizations, but `u` has "
+                    f"{u.shape[2]} realizations."
+                )
+        else:
+            if x0.ndim == 2:
+                raise ValueError(
+                    f"`x0` must be 1D since `u` is {u.ndim}D < 3D."
+                )
+            
+        # Check consistency of state dimension
+        if x0.shape[0] != model.A.shape[0]:
+            raise ValueError(
+                f"`x0` must have shape ({model.A.shape[0]}, ...), got {x0.shape}."
+            )
+    else:
+        if u.ndim >= 3:
+            x0 = jnp.zeros((model.A.shape[0], u.shape[2]))
+        else:
+            x0 = jnp.zeros((model.A.shape[0],))
+            
+    if offset is not None:
+        if not (isinstance(offset, int) and offset >= 0):
+            raise ValueError("`offset` must be a non-negative integer.")
+ 
