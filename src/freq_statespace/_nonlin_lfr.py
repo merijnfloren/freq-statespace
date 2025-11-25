@@ -60,24 +60,24 @@ class NonlinearOptimizationArgs(eqx.Module):
     
     
 def _validate_weighting(
-    weighting_enabled: bool,
+    freq_weighting: bool,
     var_noise: jnp.ndarray | None,
     print_warning: bool
 ) -> bool:
     """Check if weighting can be applied based on output noise variance availability."""
-    if weighting_enabled and var_noise is None:
+    if freq_weighting and var_noise is None:
         if print_warning:
             print(
                 "Warning: Frequency weighting based on output noise variance requested,"
                 " but such estimate is not available. Proceeding without weighting."
         )
-        weighting_enabled = False
-    return weighting_enabled
+        freq_weighting = False
+    return freq_weighting
 
 
 def _compute_weighting_matrix(
     freq: FrequencyData,
-    weighting_enabled: bool
+    freq_weighting: bool
 ) -> jnp.ndarray:
     """Compute weighting matrix for the loss function."""
     F_tot, ny = freq.Y.shape[:2]
@@ -88,7 +88,7 @@ def _compute_weighting_matrix(
     # weighting is applied (identity matrices are used).
     Lambda = np.zeros((F_tot, ny, ny))
     for k in range(F_tot):
-        diag = np.diag(1 / var_noise[k]) if weighting_enabled else np.eye(ny)
+        diag = np.diag(1 / var_noise[k]) if freq_weighting else np.eye(ny)
         Lambda[k, ...] = diag
 
     return jnp.asarray(Lambda)
@@ -97,10 +97,10 @@ def _compute_weighting_matrix(
 def _compute_bla_loss(
     bla: ModelBLA,
     data: InputOutputData,
-    weighting_enabled: bool
+    freq_weighting: bool
 ) -> float:
     """Compute the BLA performance on the loss function that is used in this module."""
-    Lambda = _compute_weighting_matrix(data.freq, weighting_enabled)
+    Lambda = _compute_weighting_matrix(data.freq, freq_weighting)
     Y = data.freq.Y
     U = data.freq.U
 
@@ -145,7 +145,7 @@ def _prepare_inference_and_learning(
     seed: int,
     epsilon: float,
     recompute_fixed_point: bool,
-    weighting_enabled: bool
+    freq_weighting: bool
 ) -> tuple[ModelNonlinearLFR, InferenceLearningArgs]:
     """Prepare initial guess and function arguments for inference and learning."""
     nz = phi.nz
@@ -187,7 +187,7 @@ def _prepare_inference_and_learning(
         lambda_w=lambda_w,
         fixed_point_iters=fixed_point_iters,
         f_data=f_data,
-        Lambda=_compute_weighting_matrix(data.freq, weighting_enabled),
+        Lambda=_compute_weighting_matrix(data.freq, freq_weighting),
         Tz_inv=Tz_inv,
         epsilon=epsilon,
         N=N,
@@ -200,7 +200,7 @@ def _prepare_nonlin_optimization(
     data: InputOutputData,
     model_init: ModelNonlinearLFR,
     offset: int,
-    weighting_enabled: bool = True
+    freq_weighting: bool = True
 ) -> tuple[ModelNonlinearLFR, NonlinearOptimizationArgs]:
     """Prepare initial guess and function arguments for nonlinear optimization."""
     theta0, theta_static = eqx.partition(model_init, eqx.is_inexact_array)
@@ -221,7 +221,7 @@ def _prepare_nonlin_optimization(
         theta_static=theta_static,
         u=_misc.extend_signal(data.time.u, offset) if offset > 0 else data.time.u, 
         Y=data.freq.Y,
-        Lambda=_compute_weighting_matrix(data.freq, weighting_enabled),
+        Lambda=_compute_weighting_matrix(data.freq, freq_weighting),
         x0=x0,
         offset=offset,
     )
@@ -375,7 +375,7 @@ def inference_and_learning(
     lambda_w: float = 1e-2,
     fixed_point_iters: int = 3,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
-    weighting_enabled: bool = True,
+    freq_weighting: bool = True,
     max_iter: int = MAX_ITER_INFERENCE_AND_LEARNING,
     print_every: int = PRINT_EVERY,
     seed: int = SEED,
@@ -403,7 +403,7 @@ def inference_and_learning(
     solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
         Any least-squares solver or general minimization solver from the
         Optimistix or Optax libraries. Defaults to `SOLVER`.
-    weighting_enabled : bool
+    freq_weighting : bool
         Whether to use frequency weighting based on the inverse of the output noise 
         variance estimate. Defaults to `True`.
     max_iter : int
@@ -437,19 +437,19 @@ def inference_and_learning(
         header = " NL-LFR inference and learning  "
         print(f"{header:=^72}")
         
-    weighting_enabled = _validate_weighting(
-        weighting_enabled, data.freq.Y_var_noise, logging_enabled)
+    freq_weighting = _validate_weighting(
+        freq_weighting, data.freq.Y_var_noise, logging_enabled)
 
     theta0, args = _prepare_inference_and_learning(
         bla, data, phi, nw, lambda_w, fixed_point_iters,
-        seed, epsilon, recompute_fixed_point, weighting_enabled
+        seed, epsilon, recompute_fixed_point, freq_weighting
     )
 
     # Optimize the model parameters
     if logging_enabled:
         print("Starting iterative optimization...")
         if print_every > 0:
-            bla_loss = _compute_bla_loss(bla, data, weighting_enabled)
+            bla_loss = _compute_bla_loss(bla, data, freq_weighting)
             print(f"    BLA loss: {bla_loss:.4e}")
 
     solve_result = solve(
@@ -499,7 +499,7 @@ def optimize(
     data: InputOutputData,
     *,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
-    weighting_enabled: bool = True,
+    freq_weighting: bool = True,
     max_iter: int = MAX_ITER_OPTIMIZATION,
     print_every: int = PRINT_EVERY,
     offset: int | None = None,
@@ -516,7 +516,7 @@ def optimize(
     solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
         Any least-squares solver or general minimization solver from the
         Optimistix or Optax libraries. Defaults to `SOLVER`.
-    weighting_enabled : bool
+    freq_weighting : bool
         Whether to use frequency weighting based on the inverse of the output noise 
         variance estimate. Defaults to `True`.
     max_iter : int
@@ -553,20 +553,20 @@ def optimize(
         header = " NL-LFR optimization  "
         print(f"{header:=^72}")
         
-    weighting_enabled = _validate_weighting(
-        weighting_enabled, data.freq.Y_var_noise, logging_enabled)
+    freq_weighting = _validate_weighting(
+        freq_weighting, data.freq.Y_var_noise, logging_enabled)
 
     if offset is None:  # we start 10% "ahead of time"
         offset = int(np.ceil(0.1 * data.time.u.shape[0]))
 
-    theta0, args = _prepare_nonlin_optimization(data, model, offset, weighting_enabled)
+    theta0, args = _prepare_nonlin_optimization(data, model, offset, freq_weighting)
 
     # Optimize the model parameters
     if logging_enabled:
         print("Starting iterative optimization...")
         if print_every > 0:
             bla_loss = _compute_bla_loss(
-                super(ModelNonlinearLFR, model), data, weighting_enabled
+                super(ModelNonlinearLFR, model), data, freq_weighting
             )
             print(f"    BLA loss: {bla_loss:.4e}")
 
