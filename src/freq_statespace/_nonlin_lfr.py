@@ -13,10 +13,7 @@ from ._data_manager import FrequencyData, InputOutputData
 from ._model_structures import ModelBLA, ModelNonlinearLFR
 from ._solve import solve
 from .static._feature_maps import AbstractFeatureMap
-from .static._nonlin_funcs import (
-    AbstractNonlinearFunction,
-    BasisFunctionModel,
-)
+from .static._nonlin_funcs import AbstractNonlinearFunction, BasisFunctionModel
 
 
 MAX_ITER_INFERENCE_AND_LEARNING = 1000
@@ -291,7 +288,6 @@ def _loss_inference_and_learning(theta: ThetaWZ, args: InferenceLearningArgs) ->
         Phi = Psi @ G_yw[k, ...] + args.lambda_w * Theta
         W_hat = jnp.linalg.solve(Phi, Psi @ (Y[k, ...] - G_yu[k, ...] @ U[k, ...]))
         Z_hat = G_zu[k, ...] @ U[k, ...] + G_zw[k, ...] @ W_hat
-        Y_hat = G_yu[k, ...] @ U[k, ...] + G_yw[k, ...] @ W_hat
         return W_hat, Z_hat, Y_hat
 
     W_star, Z_star, Y_hat = jax.vmap(_infer_nonparametric_signals)(jnp.arange(F))

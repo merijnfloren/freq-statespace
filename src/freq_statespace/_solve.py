@@ -23,7 +23,7 @@ class SolveResult:
     """Container for optimization results."""
     
     theta: PyTree
-    aux: Any
+    aux: Any  # problem-dependent auxiliary output
     loss_history: np.ndarray
     iter_count: int
     iter_times: np.ndarray

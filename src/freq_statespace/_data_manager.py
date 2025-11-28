@@ -58,7 +58,10 @@ class FrequencyData:
 
     Attributes
     ----------
-    G_bla : `NonparametricBLA`
+    G_bla : `NonparametricBLA`, optional
+        Nonparametric BLA estimate with variance estimates. Is `None` if
+        insufficient realizations are available to compute the frequency
+        response matrix (i.e., `R < nu`).
     U : jnp.ndarray, shape (N//2 + 1, nu, R)
         Normalized input DFT, averaged over periods.
     Y : jnp.ndarray, shape (N//2 + 1, ny, R)
@@ -74,7 +77,7 @@ class FrequencyData:
 
     """
 
-    G_bla: NonparametricBLA
+    G_bla: NonparametricBLA | None
     U: jnp.ndarray
     Y: jnp.ndarray
     Y_var_noise: jnp.ndarray | None
@@ -170,7 +173,7 @@ def create_data_object(
         raise ValueError("`u` and `y` must have same number of periods.")
 
     ts = 1 / fs
-    N, _, R, P = y.shape
+    N, nu, R, P = u.shape
     t = np.arange(N) * ts
 
     # Normalize data (zero mean, unit variance)
@@ -198,8 +201,16 @@ def create_data_object(
         Y_var_noise = None
 
     # Compute nonparametric BLA
-    G_bla = _best_linear_approximation.compute_nonparametric(U[f_idx], Y[f_idx])
-
+    if R >= nu:
+        G_bla = _best_linear_approximation.compute_nonparametric(U[f_idx], Y[f_idx])
+    else:
+        print(
+            "Warning: Insufficient realizations (R < nu) to compute the nonparametric "
+            "BLA. Identification can proceed, but the initial linear model may be "
+            "suboptimal."
+        )
+        G_bla = None
+        
     # We proceed with data that is averaged over periods
     u_avg, y_avg = u.mean(axis=3), y.mean(axis=3)
     U_avg = U.mean(axis=3)

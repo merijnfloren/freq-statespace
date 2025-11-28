@@ -39,10 +39,10 @@ def compute_frequency_response(U: np.ndarray, Y: np.ndarray) -> np.ndarray:
     M = R // nu
     if M * nu != R:
         print(
-            "Suboptimal number of realizations: not all realizations are "
-            "used to compute the frequency response matrix. Ideally, the "
-            "number of realizations (R) should be an integer multiple of "
-            "the number of inputs (nu)."
+            "Warning: Suboptimal number of realizations. Not all realizations "
+            "are used to compute the frequency response matrix. Ideally, "
+            "the number of realizations (R) should be an integer multiple "
+            "of the number of inputs (nu)."
         )
 
     G = np.zeros((F, ny, nu, M, P), dtype=complex)
