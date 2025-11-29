@@ -75,7 +75,7 @@ class BasisFunctionModel(AbstractNonlinearFunction):
         self.seed = seed
 
         self.beta = jax.random.uniform(
-            key=_misc.get_key(self.seed, "nonlin_funcs"),
+            key=_misc.get_key(self.seed, "basis_function_model"),
             shape=(self.phi.num_features, self.nw),
             minval=-1.0,
             maxval=1.0,
@@ -151,7 +151,7 @@ class NeuralNetwork(AbstractNonlinearFunction):
             depth=self.layers,
             activation=self.activation,
             use_bias=self.bias,
-            key=_misc.get_key(self.seed, "nonlin_funcs")
+            key=_misc.get_key(self.seed, "neural_network"),
         )
         self.num_parameters = sum(
             x.size

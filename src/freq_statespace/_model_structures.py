@@ -33,11 +33,9 @@ class ModelBLA(eqx.Module):
     ts: float
     norm: Normalizer = eqx.field(static=True)
 
-    def _simulate(
-        self,
+    def _simulate(self,
         u: np.ndarray,
-        *,
-        x0: np.ndarray | None = None
+        x0: np.ndarray
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Simulate the BLA model in the time domain.
 
@@ -46,15 +44,9 @@ class ModelBLA(eqx.Module):
         Parameters
         ----------
         u : jnp.ndarray, shape (N, nu, R)
-            Normalized input signal where:
-            - N: number of time steps
-            - nu: number of inputs
-            - R: number of realizations
-        x0 : jnp.ndarray of shape (nx, R), optional
-            Initial state of the system. If not provided, the simulation starts
-            from a zero state. If `offset > 0`, the simulation first prepends
-            the `offset` input samples; `x0` then refers to the initial state
-            of the offset samples.
+            Normalized input signal.
+        x0 : jnp.ndarray of shape (nx, R)
+            Initial state of the system. 
 
         Returns
         -------
@@ -80,9 +72,6 @@ class ModelBLA(eqx.Module):
         N, nu, R = u.shape
         ny, nx = self.C_y.shape
 
-        if x0 is None:
-            x0 = jnp.zeros((nx, R))
-
         loop_init = (
             x0,
             jnp.zeros((N, ny, R)),  # Y_accum
@@ -105,7 +94,7 @@ class ModelBLA(eqx.Module):
         u : np.ndarray, shape (N,), (N, nu), (N, nu, R), or (N, nu, R, P)
             Input signal. This array can be 1D up to 4D, with:
             - N : number of time steps  
-            - nu: number of inputs  
+            - nu : number of inputs  
             - R : number of realizations  
             - P : number of periods  
 
@@ -213,8 +202,7 @@ class ModelNonlinearLFR(ModelBLA):
     def _simulate(
         self,
         u: np.ndarray,
-        *,
-        x0: np.ndarray | None = None
+        x0: np.ndarray
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """Simulate the NL-LFR model in the time domain.
 
@@ -223,15 +211,9 @@ class ModelNonlinearLFR(ModelBLA):
         Parameters
         ----------
         u : jnp.ndarray, shape (N, nu, R)
-            Normalized input signal where:
-            - N: number of time steps
-            - nu: number of inputs
-            - R: number of realizations
-        x0 : jnp.ndarray of shape (nx, R), optional
-            Initial state of the system. If not provided, the simulation starts
-            from a zero state. If `offset > 0`, the simulation first prepends
-            the `offset` input samples; `x0` then refers to the initial state
-            of the offset samples.
+            Normalized input signal.
+        x0 : jnp.ndarray of shape (nx, R)
+            Initial state of the system.
 
         Returns
         -------
@@ -294,7 +276,7 @@ class ModelNonlinearLFR(ModelBLA):
         u : np.ndarray, shape (N,), (N, nu), (N, nu, R), or (N, nu, R, P)
             Input signal. This array can be 1D up to 4D, with:
             - N : number of time steps  
-            - nu: number of inputs  
+            - nu : number of inputs  
             - R : number of realizations  
             - P : number of periods  
 
@@ -368,7 +350,6 @@ def _simulate_core(
     """Simulate either a BLA or NL-LFR model for arbitrary input signals."""
     _validate_user_inputs(model, u, offset, x0)
 
-    # Remember original dimensionality
     u_dim = u.ndim
 
     # Ensure `u` is 4D: (N, nu, R, P)
@@ -378,11 +359,9 @@ def _simulate_core(
     # Stack periods into the first dimension: (N * P, nu, R)
     u = jnp.transpose(u, (0, 3, 1, 2)).reshape(N * P, nu, R, order="F")
 
-    # Optional offset extension (periodic case)
     if offset is not None:
         u = _misc.extend_signal(u, offset)
 
-    # Initial state
     nx = model.A.shape[0]
     x0 = jnp.zeros((nx, R)) if x0 is None else jnp.asarray(x0)
 
@@ -395,9 +374,9 @@ def _simulate_core(
 
     # Call model-specific simulator
     if with_wz:
-        y, x, w, z = model._simulate(u, x0=x0)
+        y, x, w, z = model._simulate(u, x0)
     else:
-        y, x = model._simulate(u, x0=x0)
+        y, x = model._simulate(u, x0)
         w = z = None
 
     # Remove offset samples from outputs

@@ -21,8 +21,7 @@ bla = fss.lin.optimize(bla, data)
 # Step 2: Inference and learning
 phi = fss.static.basis.Polynomial(nz=1, degree=3)
 
-nllfr = fss.nonlin.inference_and_learning(
-    bla, data, phi=phi, nw=1)
+nllfr = fss.nonlin.inference_and_learning(bla, data, phi, nw=1)
 
 # Step 3: Nonlinear optimization
 nllfr = fss.nonlin.optimize(nllfr, data, device="cpu")

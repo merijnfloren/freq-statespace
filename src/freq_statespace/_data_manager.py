@@ -202,7 +202,7 @@ def create_data_object(
 
     # Compute nonparametric BLA
     if R >= nu:
-        G_bla = _best_linear_approximation.compute_nonparametric(U[f_idx], Y[f_idx])
+        G_bla = _best_linear_approximation.nonparametric_bla(U[f_idx], Y[f_idx])
     else:
         print(
             "Warning: Insufficient realizations (R < nu) to compute the nonparametric "

@@ -1,4 +1,4 @@
-"""NL-LFR model inference and learning, and nonlinear optimization."""
+"""NL-LFR inference and learning, optimization, and instantiation."""
 from __future__ import annotations
 
 import equinox as eqx
@@ -16,12 +16,15 @@ from .static._feature_maps import AbstractFeatureMap
 from .static._nonlin_funcs import AbstractNonlinearFunction, BasisFunctionModel
 
 
+EPSILON = 1e-8
+FIXED_POINT_ITERS = 10
+LAMBDA_W = 1e-2
 MAX_ITER_INFERENCE_AND_LEARNING = 1000
 MAX_ITER_OPTIMIZATION = 100
-EPSILON = 1e-10
+SIGMA = 1e-4
 
 
-class ThetaWZ(eqx.Module):
+class DecVarsInferenceLearning(eqx.Module):
     """Decision variables for inference and learning."""
 
     B_w_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
@@ -30,31 +33,310 @@ class ThetaWZ(eqx.Module):
     D_zu_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
     
         
-class InferenceLearningArgs(eqx.Module):
-    """Arguments for inference and learning optimization."""
+class ArgsInferenceLearning(eqx.Module):
+    """Static arguments for inference and learning optimization."""
     
     theta_uy: tuple  # (A, B_u, C_y)
     phi: AbstractFeatureMap
     lambda_w: float
     fixed_point_iters: int
-    f_data: tuple  # (frequencies, sampling frequency, U, Y, G_yu)
-    Lambda: jnp.ndarray  # shape (F_tot, ny, ny)
+    freq_data: tuple  # (frequencies, sampling frequency, U, Y, G_yu)
+    Lambda: jnp.ndarray  # shape (N//2 + 1, ny, ny)
     Tz_inv: jnp.ndarray  # shape (nz, nz)
     epsilon: float
     N: int
     recompute_fixed_point: bool
 
 
-class NonlinearOptimizationArgs(eqx.Module):
-    """Arguments for nonlinear LFR optimization."""
+class ArgsNonlinearOptimization(eqx.Module):
+    """Static arguments for nonlinear LFR optimization."""
     
     theta_static: ModelNonlinearLFR
     u: jnp.ndarray  # shape (N, nu, R)
-    Y: jnp.ndarray  # shape (F_tot, ny, R)
-    Lambda: jnp.ndarray  # shape (F_tot, ny, ny)
+    Y: jnp.ndarray  # shape (N//2 + 1, ny, R)
+    Lambda: jnp.ndarray  # shape (N//2 + 1, ny, ny)
     x0: jnp.ndarray  # shape (nx, R)
     offset: int
-    
+
+
+### Public functions ###
+
+
+def inference_and_learning(
+    bla: ModelBLA,
+    data: InputOutputData,
+    phi: AbstractFeatureMap,
+    nw: int,
+    *,
+    lambda_w: float = LAMBDA_W,
+    fixed_point_iters: int = FIXED_POINT_ITERS,
+    solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
+    freq_weighting: bool = True,
+    max_iter: int = MAX_ITER_INFERENCE_AND_LEARNING,
+    print_every: int = PRINT_EVERY,
+    seed: int = SEED,
+    epsilon: float = EPSILON,
+    recompute_fixed_point: bool = True,
+    device: DeviceLike = None
+) -> ModelNonlinearLFR:
+    """Perform inference and learning.
+
+    Parameters
+    ----------
+    bla : `ModelBLA`
+        Parametric BLA model; is kept fixed during optimization.
+    data : `InputOutputData`
+        Measured input-output data object.
+    phi : `AbstractFeatureMap`
+        Any feature mapping that is linear in the parameters.
+    nw : int
+        Dimension of the latent signal `w`.
+    lambda_w : float
+        Regularization weight that controls the solution variance of `w`
+        during inference. Defaults to `LAMBDA_W`.
+    fixed_point_iters : int
+        Number of fixed-point iterations for internal consistency. Defaults to
+        `FIXED_POINT_ITERS`.
+    solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
+        Any least-squares solver or general minimization solver from the
+        Optimistix or Optax libraries. Defaults to `SOLVER`.
+    freq_weighting : bool
+        Whether to use frequency weighting based on the inverse of the output noise 
+        variance estimate. Defaults to `True`.
+    max_iter : int
+        Maximum number of optimization iterations. Defaults to
+        `MAX_ITER_INFERENCE_AND_LEARNING`.
+    print_every : int
+        Frequency of printing iteration information. If set to `0`, only a
+        summary is printed. If set to `-1`, no printing is done. Defaults to
+        `PRINT_EVERY`.
+    seed : int
+        Random seed for parameter initialization. Defaults to `SEED`.
+    epsilon : float
+        Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
+    recompute_fixed_point : bool
+        Whether to recompute the fixed-point iterations with during the backward pass.
+        Doing so increases computation time but reduces memory consumption, which can be
+        useful for large-scale problems. Defaults to `True`.
+    device : `DeviceLike`, optional
+        Device on which to perform the computations. Can be either a device
+        name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
+        provided, the default JAX device is used.
+        
+    Returns
+    -------
+    `ModelNonlinearLFR`
+        Fully initialized NL-LFR model.
+
+    """
+    logging_enabled = print_every != -1
+    if logging_enabled:
+        header = " NL-LFR inference and learning "
+        print(f"{header:=^72}")
+        
+    freq_weighting = _validate_weighting(
+        freq_weighting, data.freq.Y_var_noise, logging_enabled)
+
+    theta0, args = _prepare_inference_and_learning(
+        bla, data, phi, nw, lambda_w, fixed_point_iters,
+        seed, epsilon, recompute_fixed_point, freq_weighting
+    )
+
+    # Optimize the model parameters
+    if logging_enabled:
+        print("Starting iterative optimization...")
+        if print_every > 0:
+            bla_loss = _loss_bla(bla, data, freq_weighting)
+            print(f"    BLA loss: {bla_loss:.4e}")
+
+    solve_result = solve(
+        theta0, solver, args, _loss_inference_and_learning, 
+        max_iter, print_every, device
+    )
+
+    scalar_loss, beta = solve_result.aux
+
+    model = ModelNonlinearLFR(
+        A=args.theta_uy[0],
+        B_u=args.theta_uy[1],
+        C_y=args.theta_uy[2],
+        D_yu=bla.D_yu,
+        B_w=solve_result.theta.B_w_star,
+        C_z=args.Tz_inv @ solve_result.theta.C_z_star,
+        D_yw=solve_result.theta.D_yw_star,
+        D_zu=args.Tz_inv @ solve_result.theta.D_zu_star,
+        func_static=_create_basis_function_model_given_beta(nw, phi, beta),
+        ts=data.time.ts,
+        norm=bla.norm,
+    )
+
+    if logging_enabled:
+        _misc.evaluate_model_performance(model, data, solve_result=solve_result)
+
+        N, _, R = data.time.u.shape
+        nx = model.A.shape[0]
+
+        # Compute recursive loss of the NL-LFR model to check consistency with the
+        # inference and learning solution. We prepend 2 periods and subsequently 
+        # discard those to ensure that transients have died out (see `offset`).
+        length_two_periods = 2 * N
+        x0 = jnp.zeros((nx, R))
+        u_ext = _misc.extend_signal(data.time.u, length_two_periods)
+        y_hat = model._simulate(u_ext, x0)[0]
+        y_hat = y_hat[length_two_periods:, ...]
+        Y_hat = jnp.fft.rfft(y_hat, axis=0)
+        loss_recursive = _compute_weighted_residual(data.freq.Y, Y_hat, args.Lambda)
+        scalar_loss_recursive = jnp.sum(jnp.abs(loss_recursive) ** 2)
+
+        print("NL-LFR loss consistency check:")
+        print(f"    Inference & learning loss = {scalar_loss:.4e}")
+        print(f"    Recursive simulation loss = {scalar_loss_recursive:.4e}\n")
+
+    return model
+
+
+def optimize(
+    model: ModelNonlinearLFR,
+    data: InputOutputData,
+    *,
+    solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
+    freq_weighting: bool = True,
+    max_iter: int = MAX_ITER_OPTIMIZATION,
+    print_every: int = PRINT_EVERY,
+    offset: int | None = None,
+    device: DeviceLike = None
+) -> ModelNonlinearLFR:
+    """Refine the parameters of an NL-LFR model using time-domain simulations.
+
+    Parameters
+    ----------
+    model : `ModelNonlinearLFR`
+        Initial NL-LFR model to optimize.
+    data : `InputOutputData`
+        Measured input-output data object.
+    solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
+        Any least-squares solver or general minimization solver from the
+        Optimistix or Optax libraries. Defaults to `SOLVER`.
+    freq_weighting : bool
+        Whether to use frequency weighting based on the inverse of the output noise 
+        variance estimate. Defaults to `True`.
+    max_iter : int
+        Maximum number of optimization iterations. Defaults to `MAX_ITER_OPTIMIZATION`.
+    print_every : int
+        Frequency of printing iteration information. If set to `0`, only a
+        summary is printed. If set to `-1`, no printing is done. Defaults to
+        `PRINT_EVERY`.
+    offset : int, optional
+        A non-negative integer less than or equal to `N`. This value is used to select
+        the unknown initial state of the time-domain simulations. Specifically,
+        the initial state is selected from the steady-state BLA state
+        simulations as `x0 = x_bla[-offset, :, :]`. The number of input samples
+        are prepended accordingly. This warm-up ensures the system reaches
+        steady-state before the main period begins, allowing for leakage-free
+        DFT computations (the prepended samples are later discarded). This approach
+        is valid because the data is assumed to be periodic. Defaults to 10% of 
+        the data length if not provided.
+    epsilon : float
+        Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
+    device : `DeviceLike`, optional
+        Device on which to perform the computations. Can be either a device
+        name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
+        provided, the default JAX device is used.
+
+    Returns
+    -------
+    `ModelNonlinearLFR`
+        NL-LFR model with optimized parameters.
+
+    """
+    logging_enabled = print_every != -1
+    if logging_enabled:
+        header = " NL-LFR optimization "
+        print(f"{header:=^72}")
+        
+    freq_weighting = _validate_weighting(
+        freq_weighting, data.freq.Y_var_noise, logging_enabled
+    )
+
+    if offset is None:  # we start 10% "ahead of time"
+        offset = int(np.ceil(0.1 * data.time.u.shape[0]))
+
+    theta0, args = _prepare_nonlin_optimization(data, model, offset, freq_weighting)
+
+    # Optimize the model parameters
+    if logging_enabled:
+        print("Starting iterative optimization...")
+        if print_every > 0:
+            bla = super(ModelNonlinearLFR, model)
+            bla_loss = _loss_bla(bla, data, freq_weighting)
+            print(f"    BLA loss: {bla_loss:.4e}")
+
+    solve_result = solve(
+        theta0, solver, args, _loss_nonlin_optimization, max_iter, print_every, device
+    )
+
+    model = eqx.combine(solve_result.theta, args.theta_static)
+
+    if logging_enabled:
+        _misc.evaluate_model_performance(
+            model, data, solve_result=solve_result, offset=offset, x0=args.x0
+        )
+
+    return model
+
+
+def connect(
+    bla: ModelBLA,
+    func_static: AbstractNonlinearFunction,
+    sigma: float = SIGMA
+) -> ModelNonlinearLFR:
+    """Instantiate an NL-LFR model given the BLA and a static nonlinear function.
+
+    Parameters
+    ----------
+    bla : `ModelBLA`
+        Parametric BLA model.
+    func_static : `AbstractNonlinearFunction`
+        Nonlinear function object that defines the static relation between the latent 
+        signals `z` and `w`. Note that the `seed` attribute of `func_static` is used
+        to randomly initialize the matrices `B_w`, `C_z`, `D_yw`, and `D_zu`.
+    sigma : float
+        Standard deviation of the random values used to initialize `B_w` and `D_yw`.  
+        Choosing a small value ensures the initial NL-LFR loss remains close to the  
+        corresponding BLA loss. However, setting it too small reduces gradient 
+        magnitude and can slow down or stall learning. Defaults to `SIGMA`.
+
+    Returns
+    -------
+    `ModelNonlinearLFR`
+        NL-LFR model with (partly random) initial parameters.
+
+    """
+    nw, nz = func_static.nw, func_static.nz
+    ny, nu = bla.D_yu.shape
+    nx = bla.A.shape[0]
+
+    key = _misc.get_key(func_static.seed, "connect")
+
+    key_B_w, key_C_z, key_D_yw, key_D_zu = jax.random.split(key, 4)
+    return ModelNonlinearLFR(
+        A=bla.A,
+        B_u=bla.B_u,
+        C_y=bla.C_y,
+        D_yu=bla.D_yu,
+        B_w=sigma * jax.random.normal(key_B_w, (nx, nw)),
+        C_z=jax.random.normal(key_C_z, (nz, nx)),
+        D_yw=sigma * jax.random.normal(key_D_yw, (ny, nw)),
+        D_zu=jax.random.normal(key_D_zu, (nz, nu)),
+        func_static=func_static,
+        ts=bla.ts,
+        norm=bla.norm,
+    )
+
+
+
+### Internal helpers ###
+
     
 def _validate_weighting(
     freq_weighting: bool,
@@ -65,8 +347,9 @@ def _validate_weighting(
     if freq_weighting and var_noise is None:
         if print_warning:
             print(
-                "Warning: Frequency weighting based on output noise variance requested,"
-                " but such estimate is not available. Proceeding without weighting."
+                "Warning: Frequency weighting based on output noise variance "
+                "requested, but such estimate is not available. Proceeding without "
+                "weighting."
         )
         freq_weighting = False
     return freq_weighting
@@ -91,11 +374,7 @@ def _compute_weighting_matrix(
     return jnp.asarray(Lambda)
 
 
-def _compute_bla_loss(
-    bla: ModelBLA,
-    data: InputOutputData,
-    freq_weighting: bool
-) -> float:
+def _loss_bla(bla: ModelBLA, data: InputOutputData, freq_weighting: bool) -> float:
     """Compute the BLA performance on the loss function that is used in this module."""
     Lambda = _compute_weighting_matrix(data.freq, freq_weighting)
     Y = data.freq.Y
@@ -103,9 +382,7 @@ def _compute_bla_loss(
 
     Y_hat = bla._frequency_response(data.freq.f) @ U
     loss = _compute_weighted_residual(Y, Y_hat, Lambda)
-    loss_scalar = jnp.sum(jnp.abs(loss) ** 2)
-
-    return loss_scalar
+    return _misc.scalar_valued(loss)
 
 
 def _create_basis_function_model_given_beta(
@@ -115,16 +392,13 @@ def _create_basis_function_model_given_beta(
 ) -> BasisFunctionModel:
     """Create a `BasisFunctionModel` instance given `beta`.
 
-    When a user does not want to perform inference and learning, and instead
-    wants to perform nonlinear optimization directly, a `BasisFunctionModel` is
-    initialized randomly with a seed (specifying a custom `beta` is not
-    supported). This function bypasses that behavior by replacing the random
-    beta` with the provided matrix obtained from inference and learning. A 
-    dummy seed is still required for initialization, but it does not affect the
-    final result.
+    The coefficients `beta` of a `BasisFunctionModel` are always initialized randomly 
+    with a given seed. This function bypasses that behavior by immediately replacing 
+    the randomly generated `beta` with the provided matrix obtained from inference and 
+    learning. A dummy seed is still required for initialization, but it does not 
+    affect the final result.
     """
     dummy_seed = 0
-
     return eqx.tree_at(
         where=lambda tree: tree.beta,
         pytree=BasisFunctionModel(nw, phi, dummy_seed),
@@ -143,7 +417,7 @@ def _prepare_inference_and_learning(
     epsilon: float,
     recompute_fixed_point: bool,
     freq_weighting: bool
-) -> tuple[ModelNonlinearLFR, InferenceLearningArgs]:
+) -> tuple[ModelNonlinearLFR, ArgsInferenceLearning]:
     """Prepare initial guess and function arguments for inference and learning."""
     nz = phi.nz
     ny, nx = bla.C_y.shape
@@ -162,7 +436,7 @@ def _prepare_inference_and_learning(
     D_zu_star = jax.random.normal(key_D_zu, (nz, nu))
     D_yw_star = jax.random.normal(key_D_yw, (ny, nw))
 
-    theta_wz = ThetaWZ(B_w_star, C_z_star, D_yw_star, D_zu_star)
+    theta_wz = DecVarsInferenceLearning(B_w_star, C_z_star, D_yw_star, D_zu_star)
     theta_uy = (bla.A, bla.B_u, bla.C_y)
 
     # Compute z_star normalization
@@ -178,12 +452,12 @@ def _prepare_inference_and_learning(
     G_yu = bla._frequency_response(f_full)
     f_data = (f_full, 1 / data.time.ts, U, Y, G_yu)
 
-    args = InferenceLearningArgs(
+    args = ArgsInferenceLearning(
         theta_uy=theta_uy,
         phi=phi,
         lambda_w=lambda_w,
         fixed_point_iters=fixed_point_iters,
-        f_data=f_data,
+        freq_data=f_data,
         Lambda=_compute_weighting_matrix(data.freq, freq_weighting),
         Tz_inv=Tz_inv,
         epsilon=epsilon,
@@ -198,23 +472,27 @@ def _prepare_nonlin_optimization(
     model_init: ModelNonlinearLFR,
     offset: int,
     freq_weighting: bool = True
-) -> tuple[ModelNonlinearLFR, NonlinearOptimizationArgs]:
+) -> tuple[ModelNonlinearLFR, ArgsNonlinearOptimization]:
     """Prepare initial guess and function arguments for nonlinear optimization."""
     theta0, theta_static = eqx.partition(model_init, eqx.is_inexact_array)
 
     bla = super(ModelNonlinearLFR, model_init)
+    
+    N, _, R = data.time.u.shape
+    nx = model_init.A.shape[0]
 
     # To select the initial state, we first ensure steady-state BLA simulations 
     # by prepending two periods of input data
-    length_two_periods = 2 * data.time.u.shape[0]
+    length_two_periods = 2 * N
+    x0 = jnp.zeros((nx, R))
     u_ext = _misc.extend_signal(data.time.u, length_two_periods)
-    x_bla = bla._simulate(u_ext)[1]
+    x_bla = bla._simulate(u_ext, x0)[1]
     # Next, discard the two periods that contain transients
     x_bla = x_bla[length_two_periods:, :, :] 
     # Finally, select the initial state from steady-state simulations
     x0 = x_bla[-offset, :, :]
 
-    args = NonlinearOptimizationArgs(
+    args = ArgsNonlinearOptimization(
         theta_static=theta_static,
         u=_misc.extend_signal(data.time.u, offset) if offset > 0 else data.time.u, 
         Y=data.freq.Y,
@@ -234,11 +512,11 @@ def _compute_weighted_residual(
 
     Parameters
     ----------
-    Y : jnp.ndarray, shape (F_tot, ny, R)
+    Y : jnp.ndarray, shape (N//2 + 1, ny, R)
         Measured output spectrum, averaged over periods.
-    Y_hat : jnp.ndarray, shape (F_tot, ny, R)
+    Y_hat : jnp.ndarray, shape (N//2 + 1, ny, R)
         Simulated output spectrum.
-    Lambda : jnp.ndarray, shape (F_tot, ny, ny)
+    Lambda : jnp.ndarray, shape (N//2 + 1, ny, ny)
         Weight matrix.
 
     """
@@ -246,9 +524,9 @@ def _compute_weighted_residual(
     return jnp.sqrt(Lambda / (R * num_freqs)) @ (Y - Y_hat)
 
 
-def _loss_inference_and_learning(theta: ThetaWZ, args: InferenceLearningArgs) -> tuple:
+def _loss_inference_and_learning(theta: DecVarsInferenceLearning, args: ArgsInferenceLearning) -> tuple:
     """Implement the inference and learning method and compute the loss."""
-    f_full, fs, U, Y, G_yu = args.f_data
+    f_full, fs, U, Y, G_yu = args.freq_data
 
     A = args.theta_uy[0]
     B_u = args.theta_uy[1]
@@ -288,9 +566,9 @@ def _loss_inference_and_learning(theta: ThetaWZ, args: InferenceLearningArgs) ->
         Phi = Psi @ G_yw[k, ...] + args.lambda_w * Theta
         W_hat = jnp.linalg.solve(Phi, Psi @ (Y[k, ...] - G_yu[k, ...] @ U[k, ...]))
         Z_hat = G_zu[k, ...] @ U[k, ...] + G_zw[k, ...] @ W_hat
-        return W_hat, Z_hat, Y_hat
+        return W_hat, Z_hat
 
-    W_star, Z_star, Y_hat = jax.vmap(_infer_nonparametric_signals)(jnp.arange(F))
+    W_star, Z_star = jax.vmap(_infer_nonparametric_signals)(jnp.arange(F))
 
     # 2) Parametric learning
     w_star = jnp.fft.irfft(W_star, n=args.N, axis=0)
@@ -344,13 +622,13 @@ def _loss_inference_and_learning(theta: ThetaWZ, args: InferenceLearningArgs) ->
 
 def _loss_nonlin_optimization(
     theta: ModelNonlinearLFR, 
-    args: NonlinearOptimizationArgs
+    args: ArgsNonlinearOptimization
 ) -> tuple:
     """Perform time-domain forward simulations and compute the loss."""
     theta = eqx.combine(theta, args.theta_static)
 
     # Simulate the model in time domain
-    y_hat = theta._simulate(args.u, x0=args.x0)[0]
+    y_hat = theta._simulate(args.u, args.x0)[0]
     y_hat = y_hat[args.offset:, ...]  # discard offset samples
     Y_hat = jnp.fft.rfft(y_hat, axis=0)
 
@@ -360,283 +638,3 @@ def _loss_nonlin_optimization(
     scalar_loss = jnp.sum(jnp.abs(loss) ** 2)
 
     return loss_real, (scalar_loss,)
-
-
-def inference_and_learning(
-    bla: ModelBLA,
-    data: InputOutputData,
-    phi: AbstractFeatureMap,
-    nw: int,
-    *,
-    lambda_w: float = 1e-2,
-    fixed_point_iters: int = 3,
-    solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
-    freq_weighting: bool = True,
-    max_iter: int = MAX_ITER_INFERENCE_AND_LEARNING,
-    print_every: int = PRINT_EVERY,
-    seed: int = SEED,
-    epsilon: float = EPSILON,
-    recompute_fixed_point: bool = False,
-    device: DeviceLike = None
-) -> ModelNonlinearLFR:
-    """Perform inference and learning.
-
-    Parameters
-    ----------
-    bla : `ModelBLA`
-        Parametric BLA model; is kept fixed during optimization.
-    data : `InputOutputData`
-        Measured input-output data object.
-    phi : `AbstractFeatureMap`
-        Any feature mapping that is linear in the parameters.
-    nw : int
-        Dimension of the latent signal `w`.
-    lambda_w : float
-        Regularization weight that controls the solution variance of `w`
-        during inference. Defaults to `1e-2`.
-    fixed_point_iters : int
-        Number of fixed-point iterations for internal consistency. Defaults to `3`.
-    solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
-        Any least-squares solver or general minimization solver from the
-        Optimistix or Optax libraries. Defaults to `SOLVER`.
-    freq_weighting : bool
-        Whether to use frequency weighting based on the inverse of the output noise 
-        variance estimate. Defaults to `True`.
-    max_iter : int
-        Maximum number of optimization iterations. Defaults to
-        `MAX_ITER_INFERENCE_AND_LEARNING`.
-    print_every : int
-        Frequency of printing iteration information. If set to `0`, only a
-        summary is printed. If set to `-1`, no printing is done. Defaults to
-        `PRINT_EVERY`.
-    seed : int
-        Random seed for parameter initialization. Defaults to `SEED`.
-    epsilon : float
-        Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
-    recompute_fixed_point : bool
-        Whether to recompute the fixed-point iterations with during the backward pass.
-        Doing so increases computation time but reduces memory consumption, which can be
-        useful for large-scale problems. Defaults to `False`.
-    device : `DeviceLike`, optional
-        Device on which to perform the computations. Can be either a device
-        name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
-        provided, the default JAX device is used.
-        
-    Returns
-    -------
-    `ModelNonlinearLFR`
-        Fully initialized NL-LFR model.
-
-    """
-    logging_enabled = print_every != -1
-    if logging_enabled:
-        header = " NL-LFR inference and learning  "
-        print(f"{header:=^72}")
-        
-    freq_weighting = _validate_weighting(
-        freq_weighting, data.freq.Y_var_noise, logging_enabled)
-
-    theta0, args = _prepare_inference_and_learning(
-        bla, data, phi, nw, lambda_w, fixed_point_iters,
-        seed, epsilon, recompute_fixed_point, freq_weighting
-    )
-
-    # Optimize the model parameters
-    if logging_enabled:
-        print("Starting iterative optimization...")
-        if print_every > 0:
-            bla_loss = _compute_bla_loss(bla, data, freq_weighting)
-            print(f"    BLA loss: {bla_loss:.4e}")
-
-    solve_result = solve(
-        theta0, solver, args, _loss_inference_and_learning,
-        max_iter, print_every, device
-    )
-
-    scalar_loss, beta = solve_result.aux
-
-    model = ModelNonlinearLFR(
-        A=args.theta_uy[0],
-        B_u=args.theta_uy[1],
-        C_y=args.theta_uy[2],
-        D_yu=bla.D_yu,
-        B_w=solve_result.theta.B_w_star,
-        C_z=args.Tz_inv @ solve_result.theta.C_z_star,
-        D_yw=solve_result.theta.D_yw_star,
-        D_zu=args.Tz_inv @ solve_result.theta.D_zu_star,
-        func_static=_create_basis_function_model_given_beta(nw, phi, beta),
-        ts=data.time.ts,
-        norm=bla.norm,
-    )
-
-    if logging_enabled:
-        _misc.evaluate_model_performance(model, data, solve_result=solve_result)
-
-        # Compute recursive loss of the NL-LFR model to check consistency with the
-        # inference and learning solution. We prepend 2 periods and subsequently discard
-        # those to ensure that transients have died out (see `offset`)
-        offset = 2 * data.time.u.shape[0]
-        u_ext = _misc.extend_signal(data.time.u, offset)
-        y_hat = model._simulate(u_ext)[0]
-        y_hat = y_hat[offset:, ...]
-        Y_hat = jnp.fft.rfft(y_hat, axis=0)
-        loss_recursive = _compute_weighted_residual(data.freq.Y, Y_hat, args.Lambda)
-        scalar_loss_recursive = jnp.sum(jnp.abs(loss_recursive) ** 2)
-
-        print("NL-LFR loss consistency check:")
-        print(f"    Inference & learning loss = {scalar_loss:.4e}")
-        print(f"    Recursive simulation loss = {scalar_loss_recursive:.4e}\n")
-
-    return model
-
-
-def optimize(
-    model: ModelNonlinearLFR,
-    data: InputOutputData,
-    *,
-    solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
-    freq_weighting: bool = True,
-    max_iter: int = MAX_ITER_OPTIMIZATION,
-    print_every: int = PRINT_EVERY,
-    offset: int | None = None,
-    device: DeviceLike = None
-) -> ModelNonlinearLFR:
-    """Refine the parameters of an NL-LFR model using time-domain simulations.
-
-    Parameters
-    ----------
-    model : `ModelNonlinearLFR`
-        Initial NL-LFR model to optimize.
-    data : `InputOutputData`
-        Measured input-output data object.
-    solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
-        Any least-squares solver or general minimization solver from the
-        Optimistix or Optax libraries. Defaults to `SOLVER`.
-    freq_weighting : bool
-        Whether to use frequency weighting based on the inverse of the output noise 
-        variance estimate. Defaults to `True`.
-    max_iter : int
-        Maximum number of optimization iterations. Defaults to `MAX_ITER_OPTIMIZATION`.
-    print_every : int
-        Frequency of printing iteration information. If set to `0`, only a
-        summary is printed. If set to `-1`, no printing is done. Defaults to
-        `PRINT_EVERY`.
-    offset : int, optional
-        A non-negative integer `≤ N`. This value is used to select
-        the unknown initial state of the time-domain simulations. Specifically,
-        the initial state is selected from the steady-state BLA state
-        simulations as `x0 = x_bla[-offset, :, :]`. The number of input samples
-        are prepended accordingly. This warm-up ensures the system reaches
-        steady-state before the main period begins, allowing for leakage-free
-        DFT computations (the prepended samples are later discarded). This approach
-        is valid because the data is assumed to be periodic. Defaults to 10% of 
-        the data length if not provided.
-    epsilon : float
-        Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
-    device : `DeviceLike`, optional
-        Device on which to perform the computations. Can be either a device
-        name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
-        provided, the default JAX device is used.
-
-    Returns
-    -------
-    `ModelNonlinearLFR`
-        NL-LFR model with optimized parameters.
-
-    """
-    logging_enabled = print_every != -1
-    if logging_enabled:
-        header = " NL-LFR optimization  "
-        print(f"{header:=^72}")
-        
-    freq_weighting = _validate_weighting(
-        freq_weighting, data.freq.Y_var_noise, logging_enabled)
-
-    if offset is None:  # we start 10% "ahead of time"
-        offset = int(np.ceil(0.1 * data.time.u.shape[0]))
-
-    theta0, args = _prepare_nonlin_optimization(data, model, offset, freq_weighting)
-
-    # Optimize the model parameters
-    if logging_enabled:
-        print("Starting iterative optimization...")
-        if print_every > 0:
-            bla_loss = _compute_bla_loss(
-                super(ModelNonlinearLFR, model), data, freq_weighting
-            )
-            print(f"    BLA loss: {bla_loss:.4e}")
-
-    solve_result = solve(
-        theta0, solver, args, _loss_nonlin_optimization, 
-        max_iter, print_every, device
-    )
-
-    model = eqx.combine(solve_result.theta, args.theta_static)
-
-    if logging_enabled:
-        _misc.evaluate_model_performance(
-            model, data, solve_result=solve_result, offset=offset, x0=args.x0
-        )
-
-    return model
-
-
-def connect(
-    bla: ModelBLA,
-    func_static: AbstractNonlinearFunction,
-    sigma: float = 1e-4
-) -> ModelNonlinearLFR:
-    """Construct an NL-LFR model given the BLA and a static nonlinear function object.
-
-    Parameters
-    ----------
-    bla : `ModelBLA`
-        Parametric BLA model.
-    func_static : `AbstractNonlinearFunction`
-        Nonlinear function object that defines the static relation between
-        the latent signals `z` and `w`. Note that the `seed` attribute of
-        `func_static` is used to randomly initialize the matrices `B_w`, `C_z`,
-        `D_yw`, and `D_zu`.
-    sigma : float
-        Scaling factor for the random initialization of `B_w` and `D_yw`. Defaults
-        to `1e-4` to ensure that the initial loss of the NL-LFR model is close to
-        the BLA loss.
-
-    Returns
-    -------
-    `ModelNonlinearLFR`
-        NL-LFR model with (partly random) initial parameters.
-
-    """
-    nw, nz = func_static.nw, func_static.nz
-    ny, nu = bla.D_yu.shape
-    nx = bla.A.shape[0]
-
-    key = _misc.get_key(func_static.seed, "nonlin_lfr")
-
-    key_B_w, key_C_z, key_D_yw, key_D_zu = jax.random.split(key, 4)
-
-    # We want our initial loss to be very close to the BLA loss. To achieve
-    # this, we make the elements of B_w and D_yw small enough so the
-    # contribution of the static nonlinearity does not significantly affect
-    # the initial loss. (Initializing B_w and D_yw with zeros could hamper
-    # convergence because of zero gradients.)
-    B_w = sigma * jax.random.normal(key_B_w, (nx, nw))
-    D_yw = sigma * jax.random.normal(key_D_yw, (ny, nw))
-
-    C_z = jax.random.normal(key_C_z, (nz, nx))
-    D_zu = jax.random.normal(key_D_zu, (nz, nu))
-
-    return ModelNonlinearLFR(
-        bla.A,
-        bla.B_u,
-        C_y=bla.C_y,
-        D_yu=bla.D_yu,
-        B_w=B_w,
-        C_z=C_z,
-        D_yw=D_yw,
-        D_zu=D_zu,
-        func_static=func_static,
-        ts=bla.ts,
-        norm=bla.norm,
-    )

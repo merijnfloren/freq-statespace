@@ -138,7 +138,7 @@ def evaluate_model_performance(
         u = extend_signal(u, offset)
         
     # Simulate model
-    y_sim = model._simulate(u, x0=x0)[0]
+    y_sim = model._simulate(u, x0)[0]
     y_sim = y_sim[offset:, ...]  # discard offset samples
 
     # Compute NRMSE per output channel
@@ -189,3 +189,13 @@ def get_key(seed: int, tag: str) -> jax.Array:
     """
     tag = hash(tag) & 0xFFFFFFFF  # ensure it's in 32-bit range
     return jax.random.fold_in(jax.random.key(seed), tag)
+
+
+def real_valued(loss: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Split complex loss into real and imaginary parts."""
+    return loss.real, loss.imag
+
+
+def scalar_valued(loss: jnp.ndarray) -> float:
+    """Compute scalar loss from complex loss by summing squared magnitudes."""
+    return jnp.sum(jnp.abs(loss) ** 2)
