@@ -87,15 +87,33 @@ def extend_signal(u: jnp.ndarray, offset: int) -> jnp.ndarray:
     return u_ext
 
 
+def compute_steady_state_bla_state(bla: ModelBLA, data: InputOutputData) -> jnp.ndarray:
+    """Compute the steady-state BLA state trajectories."""
+    N, nu = data.time.u.shape[:2]
+    nx = bla.A.shape[0]
+    
+    G_xu = ModelBLA(  # parametric u->x frequency response; not the true BLA
+        A=bla.A,
+        B_u=bla.B_u,
+        C_y=jnp.eye(nx),
+        D_yu=jnp.zeros((nx, nu)), 
+        ts=bla.ts,
+        norm=bla.norm,
+    )._frequency_response(data.freq.f)  # shape (N//2 + 1, nx, nu)
+    X_bla = G_xu @ data.freq.U  # shape (N//2 + 1, nx, R)
+    x_bla = jnp.fft.irfft(X_bla, n=N, axis=0)  # shape (N, nx, R)
+    return x_bla
+
+
 def evaluate_model_performance(
     model: ModelBLA | ModelNonlinearLFR,
     data: InputOutputData,
     *,
-    solve_result: SolveResult | None = None,
-    offset: int | None = None,
-    x0: jnp.ndarray | None = None
+    x0: jnp.ndarray,
+    offset: int,
+    solve_result: SolveResult | None = None
 ) -> None:
-    """Simulate model and prints NRMSEs, along with solver timings (if provided).
+    """Simulate `model` in the time domain and evaluate performance.
 
     Parameters
     ----------
@@ -103,18 +121,18 @@ def evaluate_model_performance(
         Model to be evaluated.
     data : `InputOutputData`
         Measured input-output data.
+    x0 : jnp.ndarray of shape (nx, R)
+        Initial state used at the beginning of each simulated realization.
+    offset : int
+        A non-negative number of initial samples to prepend to the input signal in
+        order to let the system reach steady state before the main simulation
+        begins. These prepended samples are discarded from the returned outputs.
+
+        The value of `offset` must be consistent with `x0`: the provided initial
+        state `x0` must correspond to the  state at time index `-offset`.
     solve_result : `SolveResult`, optional
         Result of the model solving process, containing timing and loss
         information.
-    offset : int, optional
-        A non-negative integer representing the number of initial samples to
-        prepend to the input signal to allow the system to reach steady-state before
-        the main simulations begin. Those samples are not included in the final output
-        comparison. If not provided, two entire periods are prepended.
-    x0 : jnp.ndarray of shape (nx, R), optional
-        Initial state of the simulations. If `offset` is also provided, the simulation 
-        first prepends the `offset` input samples; `x0` then refers to the initial state
-        of the offset samples. If not provided, the simulation starts from a zero state.
         
     Raises
     ------
@@ -127,12 +145,6 @@ def evaluate_model_performance(
 
     u, y = data.time.u, data.time.y
     N, ny, R = y.shape
-
-    # Determine offset and initial state
-    if offset is None:
-        offset = 2 * N  # prepend two entire periods
-    if x0 is None:
-        x0 = jnp.zeros((model.A.shape[0], R))
         
     if offset > 0:
         u = extend_signal(u, offset)

@@ -13,12 +13,16 @@ from .static._nonlin_funcs import AbstractNonlinearFunction
 class ModelBLA(eqx.Module):
     """BLA model class.
 
-    Attributes
+    Parameters
     ----------
     A : jnp.ndarray, shape (nx, nx)
+        State transition matrix.
     B_u : jnp.ndarray, shape (nx, nu)
+        Input-to-state matrix.
     C_y : jnp.ndarray, shape (ny, nx)
+        State-to-output matrix.
     D_yu : jnp.ndarray, shape (ny, nu)
+        Input-to-output matrix.
     ts : float
         Sampling time (in seconds) of the discrete system.
     norm : Normalizer
@@ -33,9 +37,10 @@ class ModelBLA(eqx.Module):
     ts: float
     norm: Normalizer = eqx.field(static=True)
 
-    def _simulate(self,
-        u: np.ndarray,
-        x0: np.ndarray
+    def _simulate(
+        self,
+        u: jnp.ndarray,
+        x0: jnp.ndarray
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Simulate the BLA model in the time domain.
 
@@ -179,18 +184,8 @@ class ModelBLA(eqx.Module):
 class ModelNonlinearLFR(ModelBLA):
     """NL-LFR model class.
 
-    Inherits from `ModelBLA` and adds linear matrices `B_w`, `C_z`, `D_yw`, `D_zu`, and
-    static nonlinear feedback.
-
-    Attributes
-    ----------
-    B_w : jnp.ndarray, shape (nx, nw)
-    C_z : jnp.ndarray, shape (nz, nx)
-    D_yw : jnp.ndarray, shape (ny, nw)
-    D_zu : jnp.ndarray, shape (nz, nu)
-    func_static : `AbstractNonlinearFunction`
-        Static nonlinear function mapping `z` to `w`.
-
+    Inherits from `ModelBLA` and adds linear matrices `B_w`, `C_z`, `D_yw`, `D_zu`,
+    and static nonlinear feedback.
     """
 
     B_w: jnp.ndarray = eqx.field(converter=jnp.asarray)
@@ -198,11 +193,64 @@ class ModelNonlinearLFR(ModelBLA):
     D_yw: jnp.ndarray = eqx.field(converter=jnp.asarray)
     D_zu: jnp.ndarray = eqx.field(converter=jnp.asarray)
     func_static: AbstractNonlinearFunction
+    
+    # Reference to initial BLA, used for selecting initial states 
+    _bla : ModelBLA = eqx.field(repr=False)
+    
+    def __init__(
+        self,
+        A: jnp.ndarray,
+        B_u: jnp.ndarray,
+        C_y: jnp.ndarray,
+        D_yu: jnp.ndarray,
+        B_w: jnp.ndarray,
+        C_z: jnp.ndarray,
+        D_yw: jnp.ndarray,
+        D_zu: jnp.ndarray,
+        func_static: AbstractNonlinearFunction,
+        ts: float,
+        norm: Normalizer
+    ) -> None:
+        """Initialize NL-LFR model.
+
+        Parameters
+        ----------
+        A : jnp.ndarray, shape (nx, nx)
+            State transition matrix.
+        B_u : jnp.ndarray, shape (nx, nu)
+            Input-to-state matrix.
+        C_y : jnp.ndarray, shape (ny, nx)
+            State-to-output matrix.
+        D_yu : jnp.ndarray, shape (ny, nu)
+            Input-to-output matrix.
+        B_w : jnp.ndarray, shape (nx, nw)
+            Feedback input-to-state matrix.
+        C_z : jnp.ndarray, shape (nz, nx)
+            State-to-static nonlinear function matrix.
+        D_yw : jnp.ndarray, shape (ny, nw)
+            Feedback input-to-output matrix.
+        D_zu : jnp.ndarray, shape (nz, nu)
+            Input-to-static nonlinear function matrix.
+        func_static : AbstractNonlinearFunction
+            Static nonlinear function mapping `z` to `w`.
+        ts : float
+            Sampling time (in seconds) of the discrete system.
+        norm : Normalizer, optional
+            Contains means and standard deviations of input-output signals.
+
+        """
+        super().__init__(A, B_u, C_y, D_yu, ts, norm)
+        self.B_w = B_w
+        self.C_z = C_z
+        self.D_yw = D_yw
+        self.D_zu = D_zu
+        self.func_static = func_static 
+        self._bla = ModelBLA(A, B_u, C_y, D_yu, ts, norm)
 
     def _simulate(
         self,
-        u: np.ndarray,
-        x0: np.ndarray
+        u: jnp.ndarray,
+        x0: jnp.ndarray
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """Simulate the NL-LFR model in the time domain.
 
@@ -247,9 +295,6 @@ class ModelNonlinearLFR(ModelBLA):
         N, nu, R = u.shape
         nz, nx = self.C_z.shape
         ny, nw = self.D_yw.shape
-
-        if x0 is None:
-            x0 = jnp.zeros((nx, R))
 
         loop_init = (
             x0,

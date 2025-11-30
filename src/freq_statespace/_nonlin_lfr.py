@@ -16,6 +16,7 @@ from .static._feature_maps import AbstractFeatureMap
 from .static._nonlin_funcs import AbstractNonlinearFunction, BasisFunctionModel
 
 
+# When changing these constants, also update the corresponding docstrings!
 EPSILON = 1e-8
 FIXED_POINT_ITERS = 10
 LAMBDA_W = 1e-2
@@ -93,31 +94,29 @@ def inference_and_learning(
         Dimension of the latent signal `w`.
     lambda_w : float
         Regularization weight that controls the solution variance of `w`
-        during inference. Defaults to `LAMBDA_W`.
+        during inference. Defaults to `1e-2`.
     fixed_point_iters : int
-        Number of fixed-point iterations for internal consistency. Defaults to
-        `FIXED_POINT_ITERS`.
+        Number of fixed-point iterations for internal consistency. Defaults to `10`.
     solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
         Any least-squares solver or general minimization solver from the
-        Optimistix or Optax libraries. Defaults to `SOLVER`.
+        Optimistix or Optax libraries. Defaults to 
+        `optx.LevenbergMarquardt(rtol=1e-3, atol=1e-6)`.
     freq_weighting : bool
         Whether to use frequency weighting based on the inverse of the output noise 
         variance estimate. Defaults to `True`.
     max_iter : int
-        Maximum number of optimization iterations. Defaults to
-        `MAX_ITER_INFERENCE_AND_LEARNING`.
+        Maximum number of optimization iterations. Defaults to `1000`.
     print_every : int
         Frequency of printing iteration information. If set to `0`, only a
-        summary is printed. If set to `-1`, no printing is done. Defaults to
-        `PRINT_EVERY`.
+        summary is printed. If set to `-1`, no printing is done. Defaults to `1`.
     seed : int
-        Random seed for parameter initialization. Defaults to `SEED`.
+        Random seed for parameter initialization. Defaults to `42`.
     epsilon : float
-        Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
+        Numerical regularization constant for matrix inversion. Defaults to `1e-8`.
     recompute_fixed_point : bool
         Whether to recompute the fixed-point iterations with during the backward pass.
-        Doing so increases computation time but reduces memory consumption, which can be
-        useful for large-scale problems. Defaults to `True`.
+        Doing so increases computation time but reduces memory consumption, which can 
+        be useful for large-scale problems. Defaults to `True`.
     device : `DeviceLike`, optional
         Device on which to perform the computations. Can be either a device
         name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
@@ -135,7 +134,8 @@ def inference_and_learning(
         print(f"{header:=^72}")
         
     freq_weighting = _validate_weighting(
-        freq_weighting, data.freq.Y_var_noise, logging_enabled)
+        freq_weighting, data.freq.Y_var_noise, logging_enabled
+    )
 
     theta0, args = _prepare_inference_and_learning(
         bla, data, phi, nw, lambda_w, fixed_point_iters,
@@ -146,7 +146,7 @@ def inference_and_learning(
     if logging_enabled:
         print("Starting iterative optimization...")
         if print_every > 0:
-            bla_loss = _loss_bla(bla, data, freq_weighting)
+            bla_loss = _loss_bla(bla, data.freq, freq_weighting)
             print(f"    BLA loss: {bla_loss:.4e}")
 
     solve_result = solve(
@@ -167,26 +167,26 @@ def inference_and_learning(
         D_zu=args.Tz_inv @ solve_result.theta.D_zu_star,
         func_static=_create_basis_function_model_given_beta(nw, phi, beta),
         ts=data.time.ts,
-        norm=bla.norm,
+        norm=bla.norm
     )
 
     if logging_enabled:
-        _misc.evaluate_model_performance(model, data, solve_result=solve_result)
-
-        N, _, R = data.time.u.shape
-        nx = model.A.shape[0]
-
+        offset = data.time.u.shape[0]
+        x_bla = _misc.compute_steady_state_bla_state(bla, data)
+        _misc.evaluate_model_performance(
+            model, data, x0=x_bla[-offset, :, :],
+            offset=offset, solve_result=solve_result
+        )
+        
         # Compute recursive loss of the NL-LFR model to check consistency with the
-        # inference and learning solution. We prepend 2 periods and subsequently 
-        # discard those to ensure that transients have died out (see `offset`).
-        length_two_periods = 2 * N
-        x0 = jnp.zeros((nx, R))
-        u_ext = _misc.extend_signal(data.time.u, length_two_periods)
-        y_hat = model._simulate(u_ext, x0)[0]
-        y_hat = y_hat[length_two_periods:, ...]
+        # inference and learning solution. We prepend a single period and start from
+        # the corresponding steady-state BLA state.
+        u_ext = _misc.extend_signal(data.time.u, offset)
+        y_hat = model._simulate(u_ext, x0=x_bla[-offset, :, :])[0]
+        y_hat = y_hat[offset:, ...]  # discard offset samples
         Y_hat = jnp.fft.rfft(y_hat, axis=0)
-        loss_recursive = _compute_weighted_residual(data.freq.Y, Y_hat, args.Lambda)
-        scalar_loss_recursive = jnp.sum(jnp.abs(loss_recursive) ** 2)
+        loss_recursive = _loss_output_spectrum(data.freq.Y, Y_hat, args.Lambda)
+        scalar_loss_recursive = _misc.scalar_valued(loss_recursive)
 
         print("NL-LFR loss consistency check:")
         print(f"    Inference & learning loss = {scalar_loss:.4e}")
@@ -216,26 +216,24 @@ def optimize(
         Measured input-output data object.
     solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
         Any least-squares solver or general minimization solver from the
-        Optimistix or Optax libraries. Defaults to `SOLVER`.
+        Optimistix or Optax libraries. Defaults to 
+        `optx.LevenbergMarquardt(rtol=1e-3, atol=1e-6)`.
     freq_weighting : bool
         Whether to use frequency weighting based on the inverse of the output noise 
         variance estimate. Defaults to `True`.
     max_iter : int
-        Maximum number of optimization iterations. Defaults to `MAX_ITER_OPTIMIZATION`.
+        Maximum number of optimization iterations. Defaults to `100`.
     print_every : int
         Frequency of printing iteration information. If set to `0`, only a
-        summary is printed. If set to `-1`, no printing is done. Defaults to
-        `PRINT_EVERY`.
+        summary is printed. If set to `-1`, no printing is done. Defaults to `1`.
     offset : int, optional
-        A non-negative integer less than or equal to `N`. This value is used to select
-        the unknown initial state of the time-domain simulations. Specifically,
-        the initial state is selected from the steady-state BLA state
-        simulations as `x0 = x_bla[-offset, :, :]`. The number of input samples
-        are prepended accordingly. This warm-up ensures the system reaches
-        steady-state before the main period begins, allowing for leakage-free
-        DFT computations (the prepended samples are later discarded). This approach
-        is valid because the data is assumed to be periodic. Defaults to 10% of 
-        the data length if not provided.
+        A non-negative integer which is used to select the unknown initial state of 
+        the time-domain simulations. Specifically, the initial state is selected from 
+        the steady-state BLA state simulations as `x0 = x_bla[-offset, :, :]`. The 
+        number of input samples are prepended accordingly. This warm-up should ensure
+        the system reaches steady-state before the main period begins, allowing for 
+        leakage-free DFT computations (the prepended samples are later discarded). 
+        Defaults to 10% of the data length if not provided.
     epsilon : float
         Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
     device : `DeviceLike`, optional
@@ -262,27 +260,30 @@ def optimize(
         offset = int(np.ceil(0.1 * data.time.u.shape[0]))
 
     theta0, args = _prepare_nonlin_optimization(data, model, offset, freq_weighting)
-
+ 
     # Optimize the model parameters
     if logging_enabled:
         print("Starting iterative optimization...")
         if print_every > 0:
-            bla = super(ModelNonlinearLFR, model)
-            bla_loss = _loss_bla(bla, data, freq_weighting)
+            bla_loss = _loss_bla(model._bla, data.freq, freq_weighting)
             print(f"    BLA loss: {bla_loss:.4e}")
 
     solve_result = solve(
         theta0, solver, args, _loss_nonlin_optimization, max_iter, print_every, device
     )
 
-    model = eqx.combine(solve_result.theta, args.theta_static)
-
+    # Combine optimized dynamic parameters with static ones
+    model_opti = eqx.combine(solve_result.theta, args.theta_static)
+    
+    # Add original BLA to optimized model
+    model_opti = eqx.tree_at(lambda tree: tree._bla, model_opti, replace=model._bla)
+    
     if logging_enabled:
         _misc.evaluate_model_performance(
-            model, data, solve_result=solve_result, offset=offset, x0=args.x0
+            model_opti, data, x0=args.x0, offset=offset, solve_result=solve_result
         )
 
-    return model
+    return model_opti
 
 
 def connect(
@@ -304,7 +305,7 @@ def connect(
         Standard deviation of the random values used to initialize `B_w` and `D_yw`.  
         Choosing a small value ensures the initial NL-LFR loss remains close to the  
         corresponding BLA loss. However, setting it too small reduces gradient 
-        magnitude and can slow down or stall learning. Defaults to `SIGMA`.
+        magnitude and can slow down or stall learning. Defaults to `1e-4`.
 
     Returns
     -------
@@ -330,80 +331,32 @@ def connect(
         D_zu=jax.random.normal(key_D_zu, (nz, nu)),
         func_static=func_static,
         ts=bla.ts,
-        norm=bla.norm,
+        norm=bla.norm
     )
-
 
 
 ### Internal helpers ###
 
-    
-def _validate_weighting(
-    freq_weighting: bool,
-    var_noise: jnp.ndarray | None,
-    print_warning: bool
-) -> bool:
-    """Check if weighting can be applied based on output noise variance availability."""
-    if freq_weighting and var_noise is None:
-        if print_warning:
-            print(
-                "Warning: Frequency weighting based on output noise variance "
-                "requested, but such estimate is not available. Proceeding without "
-                "weighting."
-        )
-        freq_weighting = False
-    return freq_weighting
 
-
-def _compute_weighting_matrix(
-    freq: FrequencyData,
-    freq_weighting: bool
+def _loss_output_spectrum(
+    Y: jnp.ndarray,
+    Y_hat: jnp.ndarray,
+    Lambda: jnp.ndarray
 ) -> jnp.ndarray:
-    """Compute weighting matrix for the loss function."""
-    F_tot, ny = freq.Y.shape[:2]
-    var_noise = freq.Y_var_noise
-    
-    # Each (ny x ny) matrix is diagonal with elements equal to the inverse of the noise
-    # variance for each output at each frequency. If this estimate is not available, no
-    # weighting is applied (identity matrices are used).
-    Lambda = np.zeros((F_tot, ny, ny))
-    for k in range(F_tot):
-        diag = np.diag(1 / var_noise[k]) if freq_weighting else np.eye(ny)
-        Lambda[k, ...] = diag
+    """Compute the weighted loss between the measured and simulated output spectra.
 
-    return jnp.asarray(Lambda)
+    Parameters
+    ----------
+    Y : jnp.ndarray, shape (N//2 + 1, ny, R)
+        Measured output spectrum, averaged over periods.
+    Y_hat : jnp.ndarray, shape (N//2 + 1, ny, R)
+        Simulated output spectrum.
+    Lambda : jnp.ndarray, shape (N//2 + 1, ny, ny)
+        Weight matrix.
 
-
-def _loss_bla(bla: ModelBLA, data: InputOutputData, freq_weighting: bool) -> float:
-    """Compute the BLA performance on the loss function that is used in this module."""
-    Lambda = _compute_weighting_matrix(data.freq, freq_weighting)
-    Y = data.freq.Y
-    U = data.freq.U
-
-    Y_hat = bla._frequency_response(data.freq.f) @ U
-    loss = _compute_weighted_residual(Y, Y_hat, Lambda)
-    return _misc.scalar_valued(loss)
-
-
-def _create_basis_function_model_given_beta(
-    nw: int,
-    phi: AbstractFeatureMap,
-    beta: jnp.ndarray
-) -> BasisFunctionModel:
-    """Create a `BasisFunctionModel` instance given `beta`.
-
-    The coefficients `beta` of a `BasisFunctionModel` are always initialized randomly 
-    with a given seed. This function bypasses that behavior by immediately replacing 
-    the randomly generated `beta` with the provided matrix obtained from inference and 
-    learning. A dummy seed is still required for initialization, but it does not 
-    affect the final result.
     """
-    dummy_seed = 0
-    return eqx.tree_at(
-        where=lambda tree: tree.beta,
-        pytree=BasisFunctionModel(nw, phi, dummy_seed),
-        replace=beta,
-    )
+    F_tot, _, R = Y.shape
+    return jnp.sqrt(Lambda / (F_tot * R)) @ (Y - Y_hat)
 
 
 def _prepare_inference_and_learning(
@@ -421,9 +374,9 @@ def _prepare_inference_and_learning(
     """Prepare initial guess and function arguments for inference and learning."""
     nz = phi.nz
     ny, nx = bla.C_y.shape
-    N, nu, R = data.time.u.shape
+    N, nu = data.time.u.shape[:2]
 
-    f_full = data.freq.f
+    freqs = data.freq.f
     U = data.freq.U
     Y = data.freq.Y
 
@@ -442,15 +395,15 @@ def _prepare_inference_and_learning(
     # Compute z_star normalization
     G_zu = ModelBLA(  # parametric u->z frequency response; not the true BLA
         A=bla.A, B_u=bla.B_u, C_y=C_z_star, D_yu=D_zu_star, ts=bla.ts, norm=bla.norm
-    )._frequency_response(f_full)
+    )._frequency_response(freqs)
 
     Z_star = G_zu @ U
     z_star = np.fft.irfft(Z_star, axis=0)
     z_star_min, z_star_max = z_star.min(axis=(0, 2)), z_star.max(axis=(0, 2))
     Tz_inv = jnp.diag(2 / (z_star_max - z_star_min))
 
-    G_yu = bla._frequency_response(f_full)
-    f_data = (f_full, 1 / data.time.ts, U, Y, G_yu)
+    G_yu = bla._frequency_response(freqs)
+    f_data = (freqs, 1 / data.time.ts, U, Y, G_yu)
 
     args = ArgsInferenceLearning(
         theta_uy=theta_uy,
@@ -467,66 +420,12 @@ def _prepare_inference_and_learning(
     return theta_wz, args
 
 
-def _prepare_nonlin_optimization(
-    data: InputOutputData,
-    model_init: ModelNonlinearLFR,
-    offset: int,
-    freq_weighting: bool = True
-) -> tuple[ModelNonlinearLFR, ArgsNonlinearOptimization]:
-    """Prepare initial guess and function arguments for nonlinear optimization."""
-    theta0, theta_static = eqx.partition(model_init, eqx.is_inexact_array)
-
-    bla = super(ModelNonlinearLFR, model_init)
-    
-    N, _, R = data.time.u.shape
-    nx = model_init.A.shape[0]
-
-    # To select the initial state, we first ensure steady-state BLA simulations 
-    # by prepending two periods of input data
-    length_two_periods = 2 * N
-    x0 = jnp.zeros((nx, R))
-    u_ext = _misc.extend_signal(data.time.u, length_two_periods)
-    x_bla = bla._simulate(u_ext, x0)[1]
-    # Next, discard the two periods that contain transients
-    x_bla = x_bla[length_two_periods:, :, :] 
-    # Finally, select the initial state from steady-state simulations
-    x0 = x_bla[-offset, :, :]
-
-    args = ArgsNonlinearOptimization(
-        theta_static=theta_static,
-        u=_misc.extend_signal(data.time.u, offset) if offset > 0 else data.time.u, 
-        Y=data.freq.Y,
-        Lambda=_compute_weighting_matrix(data.freq, freq_weighting),
-        x0=x0,
-        offset=offset,
-    )
-    return theta0, args
-
-
-def _compute_weighted_residual(
-    Y: jnp.ndarray,
-    Y_hat: jnp.ndarray,
-    Lambda: jnp.ndarray
-) -> jnp.ndarray:
-    """Compute the weighted residuals between the measured and predicted outputs.
-
-    Parameters
-    ----------
-    Y : jnp.ndarray, shape (N//2 + 1, ny, R)
-        Measured output spectrum, averaged over periods.
-    Y_hat : jnp.ndarray, shape (N//2 + 1, ny, R)
-        Simulated output spectrum.
-    Lambda : jnp.ndarray, shape (N//2 + 1, ny, ny)
-        Weight matrix.
-
-    """
-    num_freqs, _, R = Y.shape
-    return jnp.sqrt(Lambda / (R * num_freqs)) @ (Y - Y_hat)
-
-
-def _loss_inference_and_learning(theta: DecVarsInferenceLearning, args: ArgsInferenceLearning) -> tuple:
+def _loss_inference_and_learning(
+    theta: DecVarsInferenceLearning,
+    args: ArgsInferenceLearning
+) -> tuple:
     """Implement the inference and learning method and compute the loss."""
-    f_full, fs, U, Y, G_yu = args.freq_data
+    freqs, fs, U, Y, G_yu = args.freq_data
 
     A = args.theta_uy[0]
     B_u = args.theta_uy[1]
@@ -538,17 +437,16 @@ def _loss_inference_and_learning(theta: DecVarsInferenceLearning, args: ArgsInfe
     D_zu = args.Tz_inv @ theta.D_zu_star
 
     nw = D_yw.shape[1]
-    nz, nu = D_zu.shape
-    F = U.shape[0]
-    R = U.shape[2]
+    nz, nx = C_z.shape
+    F_tot, nu, R = U.shape
 
     Theta = jnp.vstack((B_w, D_yw)).T @ jnp.vstack((B_w, D_yw))
     Theta += args.epsilon / args.lambda_w * jnp.eye(nw)
 
-    z = 2 * jnp.pi * f_full / fs
+    z = 2 * jnp.pi * freqs / fs
     zj = jnp.exp(z * 1j)
 
-    I_nx = jnp.eye(A.shape[0])
+    I_nx = jnp.eye(nx)
 
     def _compute_parametric_Gs(k):
         G_x = jnp.linalg.solve(zj[k] * I_nx - A, jnp.hstack((B_u, B_w)))
@@ -558,7 +456,7 @@ def _loss_inference_and_learning(theta: DecVarsInferenceLearning, args: ArgsInfe
             C_z @ G_x[:, nu:],  # G_zw
         )
 
-    G_yw, G_zu, G_zw = jax.vmap(_compute_parametric_Gs)(jnp.arange(F))
+    G_yw, G_zu, G_zw = jax.vmap(_compute_parametric_Gs)(jnp.arange(F_tot))
 
     # 1) Nonparametric inference
     def _infer_nonparametric_signals(k):
@@ -568,7 +466,7 @@ def _loss_inference_and_learning(theta: DecVarsInferenceLearning, args: ArgsInfe
         Z_hat = G_zu[k, ...] @ U[k, ...] + G_zw[k, ...] @ W_hat
         return W_hat, Z_hat
 
-    W_star, Z_star = jax.vmap(_infer_nonparametric_signals)(jnp.arange(F))
+    W_star, Z_star = jax.vmap(_infer_nonparametric_signals)(jnp.arange(F_tot))
 
     # 2) Parametric learning
     w_star = jnp.fft.irfft(W_star, n=args.N, axis=0)
@@ -613,11 +511,34 @@ def _loss_inference_and_learning(theta: DecVarsInferenceLearning, args: ArgsInfe
 
     # 2c) Compute loss
     Y_hat = G_yu @ U + G_yw @ W_beta
-    loss = _compute_weighted_residual(Y, Y_hat, args.Lambda)
-    loss_real = (loss.real, loss.imag)
-    scalar_loss = jnp.sum(jnp.abs(loss) ** 2)
+    loss = _loss_output_spectrum(Y, Y_hat, args.Lambda)
+    return _misc.real_valued(loss), (_misc.scalar_valued(loss), beta_hat)
 
-    return loss_real, (scalar_loss, beta_hat)
+
+def _prepare_nonlin_optimization(
+    data: InputOutputData,
+    model: ModelNonlinearLFR,
+    offset: int,
+    freq_weighting: bool = True
+) -> tuple[ModelNonlinearLFR, ArgsNonlinearOptimization, ModelNonlinearLFR]:
+    """Prepare initial guess and function arguments for nonlinear optimization."""    
+    # Separate static and dynamic parameters
+    theta0, theta_static = eqx.partition(model, eqx.is_inexact_array)
+    
+    # Ensure BLA is not part of the decision variables
+    theta0 = eqx.tree_at(lambda tree: tree._bla, theta0, replace=None) 
+    
+    x_bla = _misc.compute_steady_state_bla_state(model._bla, data)
+
+    args = ArgsNonlinearOptimization(
+        theta_static=theta_static,
+        u=_misc.extend_signal(data.time.u, offset) if offset > 0 else data.time.u, 
+        Y=data.freq.Y,
+        Lambda=_compute_weighting_matrix(data.freq, freq_weighting),
+        x0=x_bla[-offset, :, :],
+        offset=offset,
+    )
+    return theta0, args
 
 
 def _loss_nonlin_optimization(
@@ -633,8 +554,75 @@ def _loss_nonlin_optimization(
     Y_hat = jnp.fft.rfft(y_hat, axis=0)
 
     # Compute loss
-    loss = _compute_weighted_residual(args.Y, Y_hat, args.Lambda)
-    loss_real = (loss.real, loss.imag)
-    scalar_loss = jnp.sum(jnp.abs(loss) ** 2)
+    loss = _loss_output_spectrum(args.Y, Y_hat, args.Lambda)
+    return _misc.real_valued(loss), (_misc.scalar_valued(loss),)
 
-    return loss_real, (scalar_loss,)
+    
+def _validate_weighting(
+    freq_weighting: bool,
+    var_noise: jnp.ndarray | None,
+    print_warning: bool
+) -> bool:
+    """Check if weighting can be applied based on output noise variance availability."""
+    if freq_weighting and var_noise is None:
+        if print_warning:
+            print(
+                "Warning: Frequency weighting based on output noise variance "
+                "requested, but such estimate is not available. Proceeding without "
+                "weighting."
+        )
+        freq_weighting = False
+    return freq_weighting
+
+
+def _compute_weighting_matrix(
+    freq_data: FrequencyData,
+    freq_weighting: bool
+) -> jnp.ndarray:
+    """Compute weighting matrix containing the inverse output noise variances."""
+    F_tot, ny = freq_data.Y.shape[:2]
+    
+    # Each (ny x ny) matrix is diagonal with elements equal to the inverse of the noise
+    # variance for each output at each frequency. If this estimate is not available, no
+    # weighting is applied (identity matrices are used).
+    Lambda = np.zeros((F_tot, ny, ny))
+    for k in range(F_tot):
+        diag = np.diag(1 / freq_data.Y_var_noise[k]) if freq_weighting else np.eye(ny)
+        Lambda[k, ...] = diag
+
+    return jnp.asarray(Lambda)
+
+
+def _loss_bla(bla: ModelBLA, freq_data: FrequencyData, freq_weighting: bool) -> float:
+    """Compute the BLA performance on the loss function that is used in this module."""
+    Lambda = _compute_weighting_matrix(freq_data, freq_weighting)
+    Y = freq_data.Y
+    U = freq_data.U
+
+    Y_hat = bla._frequency_response(freq_data.f) @ U
+    loss = _loss_output_spectrum(Y, Y_hat, Lambda)
+    return _misc.scalar_valued(loss)
+
+
+def _create_basis_function_model_given_beta(
+    nw: int,
+    phi: AbstractFeatureMap,
+    beta: jnp.ndarray
+) -> BasisFunctionModel:
+    """Create a `BasisFunctionModel` instance given `beta`.
+
+    The coefficients `beta` of a `BasisFunctionModel` are always initialized randomly 
+    with a given seed. This function bypasses that behavior by immediately replacing 
+    the randomly generated `beta` with the provided matrix obtained from inference and 
+    learning. A dummy seed is still required for initialization, but it does not 
+    affect the final result.
+    """
+    dummy_seed = 0
+    return eqx.tree_at(
+        where=lambda tree: tree.beta,
+        pytree=BasisFunctionModel(nw, phi, dummy_seed),
+        replace=beta,
+    )
+
+
+

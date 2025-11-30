@@ -12,7 +12,7 @@ from ._solve import SolveResult, solve
 from .dep import fsid
 
 
-MAX_ITER = 1000
+MAX_ITER = 1000  # when changing, also update corresponding docstring!
 
 
 ### Public functions ###
@@ -138,7 +138,8 @@ def subspace_id(
     model = ModelBLA(A, B_u, C_y, D_yu, 1 / freq_data.fs, data.norm)
     
     if logging_enabled:
-        _misc.evaluate_model_performance(model, data)
+        x_bla = _misc.compute_steady_state_bla_state(model, data)
+        _misc.evaluate_model_performance(model, data, x0=x_bla[0, :, :], offset=0)
 
     return model
 
@@ -164,7 +165,8 @@ def optimize(
         Estimation data.
     solver : `optx.AbstractLeastSquaresSolver` or `optx.AbstractMinimiser`
         Any least-squares solver or general minimization solver from the
-        Optimistix or Optax libraries. Defaults to `SOLVER`.
+        Optimistix or Optax libraries. Defaults to 
+        `optx.LevenbergMarquardt(rtol=1e-3, atol=1e-6)`.
     freq_weighting : bool
         Whether to use frequency weighting based on the inverse of the total variance
         on the nonparametric BLA. Defaults to `True`.
@@ -174,11 +176,10 @@ def optimize(
         if no BLA estimate is available, even if `input_output_mode` is set to `False`. 
         Defaults to `False`.
     max_iter : int
-        Maximum number of optimization iterations. Defaults to `MAX_ITER`.
+        Maximum number of optimization iterations. Defaults to `1000`.
     print_every : int
         Frequency of printing iteration information. If set to `0`, only a
-        summary is printed. If set to `-1`, no printing is done. Defaults to
-        `PRINT_EVERY`.
+        summary is printed. If set to `-1`, no printing is done. Defaults to `1`.
     device : `DeviceLike`, optional
         Device on which to perform the computations. Can be either a device
         name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
@@ -202,12 +203,15 @@ def optimize(
     
     # Run the optimization
     model, solve_result = _optimize(
-        model, data.freq, input_output_mode, freq_weighting,
+        model, data, input_output_mode, freq_weighting,
         logging_enabled, solver, max_iter, print_every, device
     )
 
     if logging_enabled:
-        _misc.evaluate_model_performance(model, data, solve_result=solve_result)
+        x_bla = _misc.compute_steady_state_bla_state(model, data)
+        _misc.evaluate_model_performance(
+            model, data, x0=x_bla[0, :, :], offset=0, solve_result=solve_result
+        )
 
     return model
 
@@ -320,7 +324,7 @@ def _subspace_id(
 
 def _optimize(
     model: ModelBLA,
-    freq_data: FrequencyData,
+    data: InputOutputData,
     input_output_mode: bool,
     freq_weighting: bool,
     logging_enabled: bool,
@@ -330,18 +334,18 @@ def _optimize(
     device: DeviceLike,
 ) -> tuple[ModelBLA, SolveResult]:
     """Perform actual optimization with validated inputs."""
-    freqs = freq_data.f[freq_data.f_idx]
-    model = _normalize_states(model, freq_data)
+    freqs = data.freq.f[data.freq.f_idx]
+    model = _normalize_states(model, data)
     theta0, theta_static = eqx.partition(model, eqx.is_inexact_array)
 
     if input_output_mode:
-        U_nonpar = jnp.asarray(freq_data.U)[freq_data.f_idx]
-        Y_nonpar = jnp.asarray(freq_data.Y)[freq_data.f_idx]
+        U_nonpar = jnp.asarray(data.freq.U)[data.freq.f_idx]
+        Y_nonpar = jnp.asarray(data.freq.Y)[data.freq.f_idx]
         args = (theta_static, U_nonpar, Y_nonpar, freqs)
         loss_fn = _loss_output_spectrum
    
     else:
-        G_bla = freq_data.G_bla
+        G_bla = data.freq.G_bla
         
         # Create weighting matrix (inverse of total variance)
         if freq_weighting:
@@ -358,7 +362,7 @@ def _optimize(
     solve_result = solve(theta0, solver, args, loss_fn, max_iter, print_every, device)
 
     model = eqx.combine(solve_result.theta, theta_static)
-    model = _normalize_states(model, freq_data)
+    model = _normalize_states(model, data)
     return model, solve_result
 
 
@@ -384,17 +388,18 @@ def _loss_output_spectrum(theta_dyn: ModelBLA, args: tuple) -> tuple:
     return _misc.real_valued(loss), (_misc.scalar_valued(loss),)
 
 
-def _normalize_states(model: ModelBLA, freq: FrequencyData) -> ModelBLA:
+def _normalize_states(model: ModelBLA, data: InputOutputData) -> ModelBLA:
     """Normalize BLA model states to have unit variance."""
     nx, nu = model.B_u.shape
+    N = data.time.u.shape[0]
 
     G_xu = ModelBLA(  # parametric u->x frequency response; not the true BLA
         A=model.A, B_u=model.B_u, C_y=np.eye(nx), D_yu=np.zeros((nx, nu)), 
         ts=model.ts, norm=model.norm,
-    )._frequency_response(freq.f)  # shape (N//2 + 1, nx, nu)
+    )._frequency_response(data.freq.f)  # shape (N//2 + 1, nx, nu)
 
-    X = G_xu @ freq.U  # shape (N//2 + 1, nx, R)
-    x = np.fft.irfft(X, axis=0)  # shape (N, nx, R)
+    X = G_xu @ data.freq.U  # shape (N//2 + 1, nx, R)
+    x = np.fft.irfft(X, n=N, axis=0)  # shape (N, nx, R)
     x_std = np.std(x, axis=(0, 2))
 
     Tx = np.diag(x_std)
