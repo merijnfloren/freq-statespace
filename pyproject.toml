@@ -1,10 +1,10 @@
 [project]
 name = "freq-statespace"
-version = "0.1.0"
-description = "Frequency-domain (nonlinear) state-space identification using JAX."
+version = "0.1.1"
+description = "Frequency-domain (non)linear state-space identification using JAX."
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = "GPL-3.0"
 license-files = ["LICEN[CS]E*"]
 authors = [
   {name = "Merijn Floren", email = "merijn.floren@gmail.com"}
@@ -17,23 +17,25 @@ keywords = [
     "best-linear-approximation",
     "nonlinear-benchmarks",
     "nonlinear-regression",
+    "neural-networks",
     "optimization",
     "jax",
     "equinox",
-    "optimistix"
+    "optimistix",
+    "optax"
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
     "Intended Audience :: Education",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Natural Language :: English",
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent"
 ]
 dependencies = [
-  "jax>=0.4.38",
+  "jax>=0.4.38,!=0.7.0,!=0.7.1",
   "jaxtyping>=0.2.24",
   "optimistix>=0.0.10",
   "equinox>=0.12.2",
