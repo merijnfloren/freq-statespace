@@ -29,7 +29,7 @@ It is also possible to skip the inference and learning step and go straight to n
 ### Features
 - Provides a user-friendly interface for identifying _linear_ state-space models using frequency-domain subspace estimation based on the nonparametric BLA.
 - Offers two workflows for identifying _nonlinear_ LFR state-space models by primarily exploiting a frequency-domain formulation that enables inherent parallelism.
-- Leverages JAX for automatic differentiation, JIT compilation, and GPU/TPU acceleration.
+- Uses JAX for automatic differentiation, JIT compilation, and GPU/TPU acceleration.
 - Supports [Optimistix](https://docs.kidger.site/optimistix/) solvers (Levenberg-Marquardt, BFGS, ...) for typical system identification problems.
 - Supports [Optax](https://optax.readthedocs.io/en/latest/) optimizers (Adam, SGD, ...) for large-scale optimization.
 
