@@ -2,7 +2,7 @@
 A flexible [JAX](https://docs.jax.dev/en/latest/index.html)-based package for nonlinear state-space identification using frequency-domain optimization techniques, focusing on the *nonlinear Linear Fractional Representation* (NL-LFR) model structure, which combines an LTI system with a static feedback nonlinearity. This internal feedback formulation allows for capturing many complex real-world dynamics, with other popular block-oriented structures such as Wiener, Hammerstein, and Wiener–Hammerstein models arising as special cases. The package also supports identification of standard linear state-space models.
 
 <div align="center">
-  <img src="https://github.com/merijnfloren/freq-statespace/raw/main/model_structure.svg" width="500px" />
+  <img src="docs/model_structure.svg" width="500px" />
 </div>
 
 ### Basic usage
