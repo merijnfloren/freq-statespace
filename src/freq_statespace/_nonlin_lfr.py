@@ -1,6 +1,4 @@
 """NL-LFR inference and learning, optimization, and instantiation."""
-from __future__ import annotations
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,7 +9,7 @@ from . import _misc
 from ._config import PRINT_EVERY, SEED, SOLVER, DeviceLike
 from ._data_manager import FrequencyData, InputOutputData
 from ._model_structures import ModelBLA, ModelNonlinearLFR
-from ._solve import solve
+from ._solve import SolveResult, solve
 from .static._feature_maps import AbstractFeatureMap
 from .static._nonlin_funcs import AbstractNonlinearFunction, BasisFunctionModel
 
@@ -75,11 +73,12 @@ def inference_and_learning(
     freq_weighting: bool = True,
     max_iter: int = MAX_ITER_INFERENCE_AND_LEARNING,
     print_every: int = PRINT_EVERY,
+    return_solve_details: bool = False,
     seed: int = SEED,
     epsilon: float = EPSILON,
     recompute_fixed_point: bool = True,
     device: DeviceLike = None
-) -> ModelNonlinearLFR:
+) -> ModelNonlinearLFR | tuple[ModelNonlinearLFR, SolveResult]:
     """Perform inference and learning.
 
     Parameters
@@ -109,6 +108,9 @@ def inference_and_learning(
     print_every : int
         Frequency of printing iteration information. If set to `0`, only a
         summary is printed. If set to `-1`, no printing is done. Defaults to `1`.
+    return_solve_details : bool
+        Whether to return detailed information about the optimization process. This is
+        useful for e.g. plotting convergence curves. Defaults to `False`.
     seed : int
         Random seed for parameter initialization. Defaults to `42`.
     epsilon : float
@@ -126,6 +128,9 @@ def inference_and_learning(
     -------
     `ModelNonlinearLFR`
         Fully initialized NL-LFR model.
+    `SolveResult`, optional
+        More details about the optimization process, only returned if
+        `return_solve_details` is `True`.
 
     """
     logging_enabled = print_every != -1
@@ -192,6 +197,8 @@ def inference_and_learning(
         print(f"    Inference & learning loss = {scalar_loss:.4e}")
         print(f"    Recursive simulation loss = {scalar_loss_recursive:.4e}\n")
 
+    if return_solve_details:
+        return model, solve_result
     return model
 
 
@@ -203,9 +210,10 @@ def optimize(
     freq_weighting: bool = True,
     max_iter: int = MAX_ITER_OPTIMIZATION,
     print_every: int = PRINT_EVERY,
+    return_solve_details: bool = False,
     offset: int | None = None,
     device: DeviceLike = None
-) -> ModelNonlinearLFR:
+) -> ModelNonlinearLFR | tuple[ModelNonlinearLFR, SolveResult]:
     """Refine the parameters of an NL-LFR model using time-domain simulations.
 
     Parameters
@@ -226,6 +234,9 @@ def optimize(
     print_every : int
         Frequency of printing iteration information. If set to `0`, only a
         summary is printed. If set to `-1`, no printing is done. Defaults to `1`.
+    return_solve_details : bool
+        Whether to return detailed information about the optimization process. This is
+        useful for e.g. plotting convergence curves. Defaults to `False`.
     offset : int, optional
         A non-negative integer which is used to select the unknown initial state of 
         the time-domain simulations. Specifically, the initial state is selected from 
@@ -234,8 +245,6 @@ def optimize(
         the system reaches steady-state before the main period begins, allowing for 
         leakage-free DFT computations (the prepended samples are later discarded). 
         Defaults to 10% of the data length if not provided.
-    epsilon : float
-        Numerical regularization constant for matrix inversion. Defaults to `EPSILON`.
     device : `DeviceLike`, optional
         Device on which to perform the computations. Can be either a device
         name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
@@ -245,6 +254,9 @@ def optimize(
     -------
     `ModelNonlinearLFR`
         NL-LFR model with optimized parameters.
+    `SolveResult`, optional
+        More details about the optimization process, only returned if
+        `return_solve_details` is `True`.
 
     """
     logging_enabled = print_every != -1
@@ -283,6 +295,8 @@ def optimize(
             model_opti, data, x0=args.x0, offset=offset, solve_result=solve_result
         )
 
+    if return_solve_details:
+        return model_opti, solve_result
     return model_opti
 
 

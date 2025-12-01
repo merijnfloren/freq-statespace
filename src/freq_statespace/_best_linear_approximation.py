@@ -153,8 +153,9 @@ def optimize(
     input_output_mode: bool = False,
     max_iter: int = MAX_ITER,
     print_every: int = PRINT_EVERY,
-    device: DeviceLike = None,
-) -> ModelBLA:
+    return_solve_details: bool = False,
+    device: DeviceLike = None
+) -> ModelBLA | tuple[ModelBLA, SolveResult]:
     """Refine the parameters of the BLA using frequency-response computations.
 
     Parameters
@@ -180,6 +181,9 @@ def optimize(
     print_every : int
         Frequency of printing iteration information. If set to `0`, only a
         summary is printed. If set to `-1`, no printing is done. Defaults to `1`.
+    return_solve_details : bool
+        Whether to return detailed information about the optimization process. This is
+        useful for e.g. plotting convergence curves. Defaults to `False`.
     device : `DeviceLike`, optional
         Device on which to perform the computations. Can be either a device
         name (`"cpu"`, `"gpu"`, or `"tpu"`) or a specific JAX device. If not
@@ -189,6 +193,9 @@ def optimize(
     -------
     `ModelBLA`
         BLA model with optimized parameters.
+    `SolveResult`, optional
+        More details about the optimization process, only returned if
+        `return_solve_details` is `True`.
 
     """
     logging_enabled = print_every != -1
@@ -213,6 +220,8 @@ def optimize(
             model, data, x0=x_bla[0, :, :], offset=0, solve_result=solve_result
         )
 
+    if return_solve_details:
+        return model, solve_result
     return model
 
 
