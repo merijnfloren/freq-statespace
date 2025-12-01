@@ -54,7 +54,7 @@ data = fss.load_and_preprocess_silverbox_data()  # 8192 x 6 samples
 # Step 1: BLA estimation
 nx = 2  # state dimension
 bla = fss.lin.subspace_id(data, nx)  # NRMSE 18.36%, non-iterative
-bla = fss.lin.optimize(bla, data)  # NRMSE 13.17%, 6 iters, 1.97ms/iter
+bla = fss.lin.optimize(bla, data)  # NRMSE 13.17%, 6 iters, 1.32ms/iter
 ```
 Next, we proceed with inference and learning, followed by full nonlinear optimization:
 
@@ -62,7 +62,7 @@ Next, we proceed with inference and learning, followed by full nonlinear optimiz
 # Step 2: Inference and learning
 nw, nz = 1, 1  # internal signal dimensions
 phi = fss.static.basis.Polynomial(nz, degree=3)
-nllfr = fss.nonlin.inference_and_learning(bla, data, phi, nw)  # NRMSE 1.11%, 42 iters, 13.2ms/iter
+nllfr = fss.nonlin.inference_and_learning(bla, data, phi, nw)  # NRMSE 1.11%, 45 iters, 18.4ms/iter
 
 # Step 3: Nonlinear optimization
 nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.44%, 100 iters, 387ms/iter
@@ -76,7 +76,7 @@ import jax
 nw, nz = 1, 1  # internal signal dimensions
 neural_net = fss.static.NeuralNetwork(nw, nz, layers=1, neurons_per_layer=10, activation=jax.nn.relu)
 nllfr = fss.nonlin.connect(bla, neural_net)
-nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.54%, 100 iters, 356ms/iter
+nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.55%, 100 iters, 354ms/iter
 ```
 > **Note:** Iteration timings were measured on an NVIDIA T600 Laptop GPU.
 
