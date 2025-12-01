@@ -66,7 +66,7 @@ class BasisFunctionModel(AbstractNonlinearFunction):
             Used for randomly initializing (i) the nonlinear coefficient
             matrix `beta` and (ii) the matrices `B_w`, `C_z`, `D_yw`, and
             `D_zu` (initialized externally, not by this class). Defaults
-            to `SEED`.
+            to `42`.
 
         """
         self.nw = nw
@@ -131,7 +131,7 @@ class NeuralNetwork(AbstractNonlinearFunction):
         seed : int, optional
             Used for randomly initializing (i) the neural network parameters and
             (ii) the matrices `B_w`, `C_z`, `D_yw`, and `D_zu` (initialized
-            externally, not by this class). Defaults to `SEED`.
+            externally, not by this class). Defaults to `42`.
         bias : bool, optional
             Whether to include bias terms. Defaults to `True`.
 
