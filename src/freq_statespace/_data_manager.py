@@ -160,6 +160,8 @@ def create_data_object(
         Processed (meta)data in time and frequency domains.
 
     """
+    u, y, f_idx = np.asarray(u), np.asarray(y), np.asarray(f_idx)
+
     # Validate dimensions
     if u.ndim != 4:
         raise ValueError("`u` must have 4 dimensions: (N, nu, R, P).")
