@@ -156,7 +156,7 @@ def optimize(
     return_solve_details: bool = False,
     device: DeviceLike = None
 ) -> ModelBLA | tuple[ModelBLA, SolveResult]:
-    """Refine the parameters of the BLA using frequency-response computations.
+    """Optimize the BLA parameters via a frequency-domain fit to G_bla.
 
     Parameters
     ----------
@@ -208,11 +208,17 @@ def optimize(
         input_output_mode, freq_weighting, data.freq.G_bla, logging_enabled
     )
     
+    # Ensure Normalizer is static
+    model = eqx.tree_at(lambda tree: tree.norm, model, replace=None)
+    
     # Run the optimization
     model, solve_result = _optimize(
         model, data, input_output_mode, freq_weighting,
         logging_enabled, solver, max_iter, print_every, device
     )
+    
+    # Add Normalizer back to the model
+    model = eqx.tree_at(lambda tree: tree.norm, model, replace=data.norm)
 
     if logging_enabled:
         x_bla = _misc.compute_steady_state_bla_state(model, data)

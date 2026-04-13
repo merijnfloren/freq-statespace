@@ -287,8 +287,12 @@ def optimize(
     # Combine optimized dynamic parameters with static ones
     model_opti = eqx.combine(solve_result.theta, args.theta_static)
     
-    # Add original BLA to optimized model
-    model_opti = eqx.tree_at(lambda tree: tree._bla, model_opti, replace=model._bla)
+    # Add Normalizer and original BLA back to the optimized model
+    model_opti = eqx.tree_at(
+        lambda tree: (tree.norm, tree._bla),
+        model_opti,
+        replace=(model.norm, model._bla)
+    )
     
     if logging_enabled:
         _misc.evaluate_model_performance(
@@ -539,8 +543,12 @@ def _prepare_nonlin_optimization(
     # Separate static and dynamic parameters
     theta0, theta_static = eqx.partition(model, eqx.is_inexact_array)
     
-    # Ensure BLA is not part of the decision variables
-    theta0 = eqx.tree_at(lambda tree: tree._bla, theta0, replace=None) 
+    # Ensure Normalizer and original BLA are not part of the decision variables
+    theta0 = eqx.tree_at(
+        lambda tree: (tree.norm, tree._bla),
+        theta0,
+        replace=(None, None),
+    )
     
     x_bla = _misc.compute_steady_state_bla_state(model._bla, data)
 

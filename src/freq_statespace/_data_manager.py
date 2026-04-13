@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
@@ -86,8 +87,7 @@ class FrequencyData:
     fs: float
 
 
-@dataclass(frozen=True)
-class Normalizer:
+class Normalizer(eqx.Module):
     """Normalization statistics for input/output signals.
 
     Attributes
@@ -103,10 +103,10 @@ class Normalizer:
 
     """
 
-    u_mean: np.ndarray
-    u_std: np.ndarray
-    y_mean: np.ndarray
-    y_std: np.ndarray
+    u_mean: np.ndarray = eqx.field(converter=np.asarray)
+    u_std: np.ndarray = eqx.field(converter=np.asarray)
+    y_mean: np.ndarray = eqx.field(converter=np.asarray)
+    y_std: np.ndarray = eqx.field(converter=np.asarray)
 
 
 @dataclass(frozen=True)

@@ -35,7 +35,7 @@ class ModelBLA(eqx.Module):
     C_y: jnp.ndarray = eqx.field(converter=jnp.asarray)
     D_yu: jnp.ndarray = eqx.field(converter=jnp.asarray)
     ts: float
-    norm: Normalizer = eqx.field(static=True)
+    norm: Normalizer
 
     def _simulate(
         self,
