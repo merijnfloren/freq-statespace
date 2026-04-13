@@ -194,8 +194,14 @@ class ModelNonlinearLFR(ModelBLA):
     D_zu: jnp.ndarray = eqx.field(converter=jnp.asarray)
     func_static: AbstractNonlinearFunction
     
-    # Reference to initial BLA, used for selecting initial states 
-    _bla : ModelBLA = eqx.field(repr=False)
+    # Keep a private reference to the original BLA for initial state selection
+    # during simulation. The optimize() routine may be called multiple times
+    # (e.g. when re-running a Jupyter cell), which would otherwise overwrite the
+    # original BLA. We retain this reference because the initial BLA has useful
+    # properties (e.g. stability) for state initialization. During optimization,
+    # the focus is on the overall NL-LFR performance, without explicitly maintaining
+    # the numerical properties of the BLA component.
+    _bla: ModelBLA = eqx.field(repr=False)
     
     def __init__(
         self,
