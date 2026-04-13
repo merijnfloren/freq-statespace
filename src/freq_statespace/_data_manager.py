@@ -217,7 +217,7 @@ def create_data_object(
     u_avg, y_avg = u.mean(axis=3), y.mean(axis=3)
     U_avg = U.mean(axis=3)
 
-    # Finally, we convert the input-output data to Jax arrays
+    # Finally, we convert the input-output data to JAX arrays
     u_avg, y_avg = jnp.asarray(u_avg), jnp.asarray(y_avg)
     U_avg, Y_avg = jnp.asarray(U_avg), jnp.asarray(Y_avg)
 
