@@ -1,22 +1,27 @@
 """General static nonlinear function mappings (mapping `z` to `w`)."""
-
 from abc import abstractmethod
 from collections.abc import Callable
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from typing_extensions import Self
 
 from .. import _misc
+from .._activations import activation_from_config, activation_to_config
 from .._config import SEED
+from .._serialize import NONLINEAR_FUNCTION_REGISTRY, Serializable
 from ..static._feature_maps import AbstractFeatureMap
 
 
-class AbstractNonlinearFunction(eqx.Module):
+class AbstractNonlinearFunction(eqx.Module, Serializable):
     """Abstract base class for nonlinear function mappings.
 
-    Subclasses must provide the attributes `nw`, `nz`, `seed`, and
-    `num_parameters`, and implement the method `_evaluate()`.
+    Subclasses must provide the attributes `nw`, `nz`, `seed`, and `num_parameters`,
+    and implement `_evaluate()`.
+
+    The tagged-config serialization hooks are inherited from `Serializable`.
     """
 
     nw: eqx.AbstractVar[int]
@@ -32,7 +37,8 @@ class AbstractNonlinearFunction(eqx.Module):
         """
         ...
 
-
+    
+@NONLINEAR_FUNCTION_REGISTRY.register
 class BasisFunctionModel(AbstractNonlinearFunction):
     """Static nonlinear function based on an `AbstractFeatureMap`.
 
@@ -47,6 +53,7 @@ class BasisFunctionModel(AbstractNonlinearFunction):
     phi: AbstractFeatureMap
     num_parameters: int
     seed: int = eqx.field(repr=False)
+    _type_name: ClassVar[str] = "basis_function_model"
 
     def __init__(
         self,
@@ -63,10 +70,9 @@ class BasisFunctionModel(AbstractNonlinearFunction):
         phi : AbstractFeatureMap
             Nonlinear feature map that is linear in the parameters.
         seed : int, optional
-            Used for randomly initializing (i) the nonlinear coefficient
-            matrix `beta` and (ii) the matrices `B_w`, `C_z`, `D_yw`, and
-            `D_zu` (initialized externally, not by this class). Defaults
-            to `42`.
+            Used for randomly initializing (i) the nonlinear coefficient matrix
+            `beta` and (ii) the matrices `B_w`, `C_z`, `D_yw`, and `D_zu` 
+            (initialized externally, not by this class). Defaults to `42`.
 
         """
         self.nw = nw
@@ -81,11 +87,34 @@ class BasisFunctionModel(AbstractNonlinearFunction):
             maxval=1.0,
         )
         self.num_parameters = self.beta.size
+        
+    @classmethod
+    def _from_config(cls, config: dict[str, Any]) -> Self:
+        from .._serialize import FEATURE_MAP_REGISTRY
+
+        phi = FEATURE_MAP_REGISTRY.from_config(config["phi"])
+        if not isinstance(phi, AbstractFeatureMap):
+            raise TypeError("Deserialized `phi` is not a feature map.")
+        return cls(
+            nw=config["nw"],
+            phi=phi,
+            seed=config["seed"],
+        )
 
     def _evaluate(self, z: jnp.ndarray) -> jnp.ndarray:
         return self.phi._compute_features(z) @ self.beta
+    
+    def _config_payload(self) -> dict[str, Any]:
+        config = {
+            "nw": self.nw,
+            "nz": self.nz,
+            "seed": self.seed,  # not strictly needed, but included for completeness
+            "phi": self.phi.to_config(),
+        }
+        return config
 
 
+@NONLINEAR_FUNCTION_REGISTRY.register
 class NeuralNetwork(AbstractNonlinearFunction):
     """Fully connected feedforward neural network.
 
@@ -102,7 +131,7 @@ class NeuralNetwork(AbstractNonlinearFunction):
     activation: Callable = eqx.field(repr=False)
     seed: int = eqx.field(repr=False)
     bias: bool = eqx.field(repr=False)
-    
+    _type_name: ClassVar[str] = "neural_network"
 
     def __init__(
         self,
@@ -126,8 +155,11 @@ class NeuralNetwork(AbstractNonlinearFunction):
             Number of hidden layers.
         neurons_per_layer : int
             Number of neurons per hidden layer.
-        activation : Callable, from `jax.nn`
-            Activation function used in hidden layers.
+        activation : Callable, from `jax.nn` or a `functools.partial` wrapping one
+            Activation function used in hidden layers, must be an elementwise function
+            from `jax.nn` or a `functools.partial` wrapping one (e.g. to specify keyword
+            arguments). For a complete list of supported activations, see 
+            'ELEMENTWISE_ACTIVATIONS' in `freq_statespace._activations`.
         seed : int, optional
             Used for randomly initializing (i) the neural network parameters and
             (ii) the matrices `B_w`, `C_z`, `D_yw`, and `D_zu` (initialized
@@ -158,6 +190,29 @@ class NeuralNetwork(AbstractNonlinearFunction):
             for x in jax.tree_util.tree_leaves(self.model)
             if isinstance(x, jax.Array)
         )
+        
+    @classmethod
+    def _from_config(cls, config: dict[str, Any]) -> Self:
+        return cls(
+            nz=config["nz"],
+            nw=config["nw"],
+            layers=config["layers"],
+            neurons_per_layer=config["neurons_per_layer"],
+            activation=activation_from_config(config["activation"]),
+            seed=config["seed"],
+            bias=config["bias"],
+        )
 
     def _evaluate(self, z: jnp.ndarray) -> jnp.ndarray:
         return jax.vmap(self.model)(z)
+    
+    def _config_payload(self) -> dict[str, Any]:
+        return {
+            "nw": self.nw,
+            "nz": self.nz,
+            "layers": self.layers,
+            "neurons_per_layer": self.neurons_per_layer,
+            "activation": activation_to_config(self.activation),
+            "bias": self.bias,
+            "seed": self.seed,  # not strictly needed, but included for completeness
+        }

@@ -1,5 +1,4 @@
 """Data structures in time and frequency domains, including metadata."""
-
 from dataclasses import dataclass
 
 import equinox as eqx

@@ -639,7 +639,7 @@ def _create_basis_function_model_given_beta(
     learning. A dummy seed is still required for initialization, but it does not 
     affect the final result.
     """
-    dummy_seed = 0
+    dummy_seed = -1
     return eqx.tree_at(
         where=lambda tree: tree.beta,
         pytree=BasisFunctionModel(nw, phi, dummy_seed),

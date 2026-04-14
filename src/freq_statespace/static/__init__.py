@@ -10,8 +10,6 @@ Exposed components:
 - `NeuralNetwork`:  Static nonlinear function (mapping `z` to `w`) based on a neural
    network.
 """
-
-
 from . import _feature_maps as basis
 from ._nonlin_funcs import BasisFunctionModel, NeuralNetwork
 

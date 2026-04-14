@@ -80,6 +80,13 @@ nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.55%, 100 iters, 354ms/iter
 ```
 > **Note:** Iteration timings were measured on an NVIDIA T600 Laptop GPU.
 
+Serialization of models can be achieved like so:
+```python
+path = "models/nllfr.zip"
+fss.save_model(nllfr, path)
+nllfr_loaded = fss.load_model(path)
+```
+
 The `examples/` folder also provides Jupyter notebooks for more challenging benchmark systems, with additional notes on hyperparameter tuning and solver configurations.
 
 ## Preparing your data

@@ -1,16 +1,20 @@
 """BLA and NL-LFR model classes, optimized for use with JAX and Equinox."""
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from typing_extensions import Self
 
 from . import _misc
 from ._data_manager import Normalizer
+from ._serialize import MODEL_REGISTRY, Serializable
 from .static._nonlin_funcs import AbstractNonlinearFunction
 
 
-class ModelBLA(eqx.Module):
+@MODEL_REGISTRY.register
+class ModelBLA(eqx.Module, Serializable):
     """BLA model class.
 
     Parameters
@@ -36,54 +40,26 @@ class ModelBLA(eqx.Module):
     D_yu: jnp.ndarray = eqx.field(converter=jnp.asarray)
     ts: float
     norm: Normalizer
-
-    def _simulate(
-        self,
-        u: jnp.ndarray,
-        x0: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Simulate the BLA model in the time domain.
-
-        To be used within an optimization loop, as it assumes normalized data.
-
-        Parameters
-        ----------
-        u : jnp.ndarray, shape (N, nu, R)
-            Normalized input signal.
-        x0 : jnp.ndarray of shape (nx, R)
-            Initial state of the system. 
-
-        Returns
-        -------
-        Y : jnp.ndarray, shape (N, ny, R)
-            Simulated output trajectories.
-        X : jnp.ndarray, of shape (N, nx, R)
-            Simulated state trajectories.
-        W : jnp.ndarray, of shape (N, nw, R)
-            Static nonlinear function outputs.
-        Z : jnp.ndarray, of shape (N, nz, R)
-            Static nonlinear function inputs.
-
-        """
-        def _make_step(k, state):
-            X, Y_accum, X_accum = state
-            U = jax.lax.dynamic_slice(u, (k, 0, 0), (1, nu, R)).squeeze(axis=0)
-
-            # Model equations
-            X_next = self.A @ X + self.B_u @ U
-            Y = self.C_y @ X + self.D_yu @ U
-            return X_next, Y_accum.at[k, ...].set(Y), X_accum.at[k, ...].set(X)
-
-        N, nu, R = u.shape
-        ny, nx = self.C_y.shape
-
-        loop_init = (
-            x0,
-            jnp.zeros((N, ny, R)),  # Y_accum
-            jnp.zeros((N, nx, R)),  # X_accum
+    _type_name: ClassVar[str] = "model_bla"
+    
+    @classmethod
+    def _from_config(cls, config: dict[str, Any]) -> Self:
+        """Create a dummy PyTree with the same structure as a to-be-loaded model."""
+        nu, ny, nx = config["nu"], config["ny"], config["nx"]
+        norm = Normalizer(
+            u_mean=np.zeros(nu),
+            u_std=np.zeros(nu),
+            y_mean=np.zeros(ny),
+            y_std=np.zeros(ny),
         )
-        Y, X = jax.lax.fori_loop(0, N, _make_step, loop_init)[1:]
-        return Y, X
+        return cls(
+            A=jnp.zeros((nx, nx)),
+            B_u=jnp.zeros((nx, nu)),
+            C_y=jnp.zeros((ny, nx)),
+            D_yu=jnp.zeros((ny, nu)),
+            ts=0.0,
+            norm=norm,
+        )
 
     def simulate(
         self,
@@ -146,6 +122,58 @@ class ModelBLA(eqx.Module):
 
         """
         return _simulate_core(self, u, x0=x0, offset=offset, with_wz=False)
+    
+    def num_parameters(self) -> int:
+        """Return the total number of model parameters."""
+        return self.A.size + self.B_u.size + self.C_y.size + self.D_yu.size
+    
+    def _simulate(
+        self,
+        u: jnp.ndarray,
+        x0: jnp.ndarray
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Simulate the BLA model in the time domain.
+
+        To be used within an optimization loop, as it assumes normalized data.
+
+        Parameters
+        ----------
+        u : jnp.ndarray, shape (N, nu, R)
+            Normalized input signal.
+        x0 : jnp.ndarray of shape (nx, R)
+            Initial state of the system. 
+
+        Returns
+        -------
+        Y : jnp.ndarray, shape (N, ny, R)
+            Simulated output trajectories.
+        X : jnp.ndarray, of shape (N, nx, R)
+            Simulated state trajectories.
+        W : jnp.ndarray, of shape (N, nw, R)
+            Static nonlinear function outputs.
+        Z : jnp.ndarray, of shape (N, nz, R)
+            Static nonlinear function inputs.
+
+        """
+        def _make_step(k, state):
+            X, Y_accum, X_accum = state
+            U = jax.lax.dynamic_slice(u, (k, 0, 0), (1, nu, R)).squeeze(axis=0)
+
+            # Model equations
+            X_next = self.A @ X + self.B_u @ U
+            Y = self.C_y @ X + self.D_yu @ U
+            return X_next, Y_accum.at[k, ...].set(Y), X_accum.at[k, ...].set(X)
+
+        N, nu, R = u.shape
+        ny, nx = self.C_y.shape
+
+        loop_init = (
+            x0,
+            jnp.zeros((N, ny, R)),  # Y_accum
+            jnp.zeros((N, nx, R)),  # X_accum
+        )
+        Y, X = jax.lax.fori_loop(0, N, _make_step, loop_init)[1:]
+        return Y, X
 
     def _frequency_response(self, f: np.ndarray) -> jnp.ndarray:
         """Compute the frequency response of the system.
@@ -175,12 +203,17 @@ class ModelBLA(eqx.Module):
         B_u = self.B_u.astype(complex)  # to suppress a warning
         C_y = self.C_y.astype(complex)  # to suppress a warning
         return jax.vmap(G)(np.arange(len(f)))
+    
+    def _config_payload(self) -> dict[str, Any]:
+        """Convert structural information to a dictionary for serialization."""
+        return {
+            "nu": self.B_u.shape[1],
+            "ny": self.C_y.shape[0],
+            "nx": self.A.shape[0],
+        }
+    
 
-    def num_parameters(self) -> int:
-        """Return the total number of model parameters."""
-        return self.A.size + self.B_u.size + self.C_y.size + self.D_yu.size
-
-
+@MODEL_REGISTRY.register
 class ModelNonlinearLFR(ModelBLA):
     """NL-LFR model class.
 
@@ -202,6 +235,7 @@ class ModelNonlinearLFR(ModelBLA):
     # the focus is on the overall NL-LFR performance, without explicitly maintaining
     # the numerical properties of the BLA component.
     _bla: ModelBLA = eqx.field(repr=False)
+    _type_name: ClassVar[str] = "model_nllfr"
     
     def __init__(
         self,
@@ -252,67 +286,35 @@ class ModelNonlinearLFR(ModelBLA):
         self.D_zu = D_zu
         self.func_static = func_static 
         self._bla = ModelBLA(A, B_u, C_y, D_yu, ts, norm)
+        
+    @classmethod
+    def _from_config(cls, config: dict[str, Any]) -> Self:
+        """Create a dummy PyTree with the same structure as a to-be-loaded model."""
+        from ._serialize import NONLINEAR_FUNCTION_REGISTRY
 
-    def _simulate(
-        self,
-        u: jnp.ndarray,
-        x0: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """Simulate the NL-LFR model in the time domain.
+        bla = ModelBLA._from_config(config)
+        nu, ny, nx = config["nu"], config["ny"], config["nx"]
+        func_static = NONLINEAR_FUNCTION_REGISTRY.from_config(config["func_static"])
+        if not isinstance(func_static, AbstractNonlinearFunction):
+            raise TypeError("Deserialized func_static is not a nonlinear function.")
 
-        To be used within an optimization loop, as it assumes normalized data.
-
-        Parameters
-        ----------
-        u : jnp.ndarray, shape (N, nu, R)
-            Normalized input signal.
-        x0 : jnp.ndarray of shape (nx, R)
-            Initial state of the system.
-
-        Returns
-        -------
-        Y : jnp.ndarray, shape (N, ny, R)
-            Simulated output trajectories.
-        X : jnp.ndarray, of shape (N, nx, R)
-            Simulated state trajectories.
-        W : jnp.ndarray, of shape (N, nw, R)
-            Static nonlinear function outputs.
-        Z : jnp.ndarray, of shape (N, nz, R)
-            Static nonlinear function inputs.
-
-        """
-        def _make_step(k, state):
-            X, Y_accum, X_accum, W_accum, Z_accum = state
-            U = jax.lax.dynamic_slice(u, (k, 0, 0), (1, nu, R)).squeeze(axis=0)
-
-            # Model equations
-            Z = self.C_z @ X + self.D_zu @ U
-            W = self.func_static._evaluate(Z.T).T
-            X_next = self.A @ X + self.B_u @ U + self.B_w @ W
-            Y = self.C_y @ X + self.D_yu @ U + self.D_yw @ W
-            return (
-                X_next,
-                Y_accum.at[k, ...].set(Y),
-                X_accum.at[k, ...].set(X),
-                W_accum.at[k, ...].set(W),
-                Z_accum.at[k, ...].set(Z),
-            )
-
-        N, nu, R = u.shape
-        nz, nx = self.C_z.shape
-        ny, nw = self.D_yw.shape
-
-        loop_init = (
-            x0,
-            jnp.zeros((N, ny, R)),  # Y_accum
-            jnp.zeros((N, nx, R)),  # X_accum
-            jnp.zeros((N, nw, R)),  # W_accum
-            jnp.zeros((N, nz, R)),  # Z_accum
+        func_config = config["func_static"]["config"]
+        nw = func_config["nw"]
+        nz = func_config["nz"]
+        return cls(
+            A=bla.A,
+            B_u=bla.B_u,
+            C_y=bla.C_y,
+            D_yu=bla.D_yu,
+            B_w=jnp.zeros((nx, nw)),
+            C_z=jnp.zeros((nz, nx)),
+            D_yw=jnp.zeros((ny, nw)),
+            D_zu=jnp.zeros((nz, nu)),
+            func_static=func_static,
+            ts=bla.ts,
+            norm=bla.norm,
         )
         
-        Y, X, W, Z = jax.lax.fori_loop(0, N, _make_step, loop_init)[1:]
-        return Y, X, W, Z
-
     def simulate(
         self,
         u: np.ndarray,
@@ -388,6 +390,71 @@ class ModelNonlinearLFR(ModelBLA):
             self.B_w.size + self.C_z.size + self.D_yw.size + self.D_zu.size
             + super().num_parameters() + self.func_static.num_parameters
         )
+
+    def _simulate(
+        self,
+        u: jnp.ndarray,
+        x0: jnp.ndarray
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        """Simulate the NL-LFR model in the time domain.
+
+        To be used within an optimization loop, as it assumes normalized data.
+
+        Parameters
+        ----------
+        u : jnp.ndarray, shape (N, nu, R)
+            Normalized input signal.
+        x0 : jnp.ndarray of shape (nx, R)
+            Initial state of the system.
+
+        Returns
+        -------
+        Y : jnp.ndarray, shape (N, ny, R)
+            Simulated output trajectories.
+        X : jnp.ndarray, of shape (N, nx, R)
+            Simulated state trajectories.
+        W : jnp.ndarray, of shape (N, nw, R)
+            Static nonlinear function outputs.
+        Z : jnp.ndarray, of shape (N, nz, R)
+            Static nonlinear function inputs.
+
+        """
+        def _make_step(k, state):
+            X, Y_accum, X_accum, W_accum, Z_accum = state
+            U = jax.lax.dynamic_slice(u, (k, 0, 0), (1, nu, R)).squeeze(axis=0)
+
+            # Model equations
+            Z = self.C_z @ X + self.D_zu @ U
+            W = self.func_static._evaluate(Z.T).T
+            X_next = self.A @ X + self.B_u @ U + self.B_w @ W
+            Y = self.C_y @ X + self.D_yu @ U + self.D_yw @ W
+            return (
+                X_next,
+                Y_accum.at[k, ...].set(Y),
+                X_accum.at[k, ...].set(X),
+                W_accum.at[k, ...].set(W),
+                Z_accum.at[k, ...].set(Z),
+            )
+
+        N, nu, R = u.shape
+        nz, nx = self.C_z.shape
+        ny, nw = self.D_yw.shape
+
+        loop_init = (
+            x0,
+            jnp.zeros((N, ny, R)),  # Y_accum
+            jnp.zeros((N, nx, R)),  # X_accum
+            jnp.zeros((N, nw, R)),  # W_accum
+            jnp.zeros((N, nz, R)),  # Z_accum
+        )
+        
+        Y, X, W, Z = jax.lax.fori_loop(0, N, _make_step, loop_init)[1:]
+        return Y, X, W, Z
+    
+    def _config_payload(self) -> dict[str, Any]:
+        config = super()._config_payload()
+        config["func_static"] = self.func_static.to_config()
+        return config
         
         
 def _simulate_core(

@@ -14,6 +14,7 @@ The API is structured around three main namespaces:
 Additional components:
 - ``create_data_object`` for constructing ``InputOutputData`` objects, the starting
     point for all identification routines.
+- ``save_model`` and ``load_model`` for saving and loading model instances.
 -  ``InputOutputData``, ``TimeData``, ``FrequencyData``, ``NonparametricBLA``,
     and ``Normalizer`` data objects.
 - ``ModelBLA`` and ``ModelNonlinearLFR`` as the core model classes.
@@ -22,8 +23,6 @@ Additional components:
     This is useful for quickly loading a low-dimensional benchmark dataset in the
     required format.
 """
-
-
 from . import _best_linear_approximation as lin
 from . import _nonlin_lfr as nonlin
 from . import static
@@ -37,6 +36,7 @@ from ._data_manager import (
 )
 from ._misc import load_and_preprocess_silverbox_data
 from ._model_structures import ModelBLA, ModelNonlinearLFR
+from ._serialize import save_model, load_model
 from ._solve import SolveResult
 
 
@@ -53,5 +53,7 @@ __all__ = [
     "load_and_preprocess_silverbox_data",
     "ModelBLA",
     "ModelNonlinearLFR",
-    "SolveResult"
+    "save_model",
+    "load_model",
+    "SolveResult",
 ]
