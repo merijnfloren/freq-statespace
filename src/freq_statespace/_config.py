@@ -1,5 +1,4 @@
 """Centralized default constants and types used across the package."""
-
 from typing import Literal
 
 import jax

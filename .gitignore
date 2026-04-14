@@ -20,3 +20,6 @@ build/
 # Linters/formatters
 .flake8
 .ruff_cache/
+
+# Codex
+.codex

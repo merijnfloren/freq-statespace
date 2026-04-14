@@ -1,7 +1,7 @@
 """Data structures in time and frequency domains, including metadata."""
-
 from dataclasses import dataclass
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
@@ -86,8 +86,7 @@ class FrequencyData:
     fs: float
 
 
-@dataclass(frozen=True)
-class Normalizer:
+class Normalizer(eqx.Module):
     """Normalization statistics for input/output signals.
 
     Attributes
@@ -103,10 +102,10 @@ class Normalizer:
 
     """
 
-    u_mean: np.ndarray
-    u_std: np.ndarray
-    y_mean: np.ndarray
-    y_std: np.ndarray
+    u_mean: np.ndarray = eqx.field(converter=np.asarray)
+    u_std: np.ndarray = eqx.field(converter=np.asarray)
+    y_mean: np.ndarray = eqx.field(converter=np.asarray)
+    y_std: np.ndarray = eqx.field(converter=np.asarray)
 
 
 @dataclass(frozen=True)
@@ -160,6 +159,8 @@ def create_data_object(
         Processed (meta)data in time and frequency domains.
 
     """
+    u, y, f_idx = np.asarray(u), np.asarray(y), np.asarray(f_idx)
+
     # Validate dimensions
     if u.ndim != 4:
         raise ValueError("`u` must have 4 dimensions: (N, nu, R, P).")
@@ -215,7 +216,7 @@ def create_data_object(
     u_avg, y_avg = u.mean(axis=3), y.mean(axis=3)
     U_avg = U.mean(axis=3)
 
-    # Finally, we convert the input-output data to Jax arrays
+    # Finally, we convert the input-output data to JAX arrays
     u_avg, y_avg = jnp.asarray(u_avg), jnp.asarray(y_avg)
     U_avg, Y_avg = jnp.asarray(U_avg), jnp.asarray(Y_avg)
 

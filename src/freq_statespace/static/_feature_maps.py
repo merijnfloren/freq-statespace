@@ -1,19 +1,24 @@
 """Nonlinear feature mappings (`z` to `features`) that are linear in the parameters."""
-
 from abc import abstractmethod
 from itertools import combinations_with_replacement
+from typing import Any, ClassVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from typing_extensions import Self
+
+from .._serialize import FEATURE_MAP_REGISTRY, Serializable
 
 
-class AbstractFeatureMap(eqx.Module):
+class AbstractFeatureMap(eqx.Module, Serializable):
     """Abstract base class for feature mappings.
 
     Subclasses must provide the attributes `nz` and `num_features`,
-    and must implement the method `_compute_features()`.
+    and must implement `_compute_features()`.
+
+    The tagged-config serialization hooks are inherited from `Serializable`.
     """
 
     nz: eqx.AbstractVar[int]
@@ -28,6 +33,7 @@ class AbstractFeatureMap(eqx.Module):
         ...
 
 
+@FEATURE_MAP_REGISTRY.register
 class Polynomial(AbstractFeatureMap):
     """Flexible polynomial feature map.
 
@@ -38,19 +44,20 @@ class Polynomial(AbstractFeatureMap):
 
     nz: int
     degree: int
-    type: str
+    polynomial_type: str
     cross_terms: bool
     offset: bool
     linear: bool
     tanh_clip: bool
     num_features: int
     combination_matrix: jnp.ndarray = eqx.field(repr=False)
+    _type_name: ClassVar[str] = "polynomial"
 
     def __init__(
         self,
         nz: int,
         degree: int,
-        type: str = "full",
+        polynomial_type: str = "full",
         cross_terms: bool = True,
         offset: bool = True,
         linear: bool = True,
@@ -64,7 +71,7 @@ class Polynomial(AbstractFeatureMap):
             Number of input features (dimension of latent signal `z`).
         degree : int
             Maximum polynomial degree.
-        type : str, optional
+        polynomial_type : str, optional
             Type of polynomial. Must be one of `"full"`, `"odd"`, or `"even"`.
             Defaults to `"full"`.
         cross_terms : bool, optional
@@ -83,22 +90,23 @@ class Polynomial(AbstractFeatureMap):
         """
         self.nz = nz
         self.degree = degree
-        self.type = type
+        self.polynomial_type = polynomial_type
         self.cross_terms = cross_terms
         self.offset = offset
         self.linear = linear
         self.tanh_clip = tanh_clip
 
         # Construct the feature architecture based on the specified parameters.
-        if self.type == "full":
+        if self.polynomial_type == "full":
             active_degrees = range(1 if self.linear else 2, self.degree + 1)
-        elif self.type == "odd":
+        elif self.polynomial_type == "odd":
             active_degrees = range(1 if self.linear else 3, self.degree + 1, 2)
-        elif self.type == "even":
+        elif self.polynomial_type == "even":
             active_degrees = range(2, self.degree + 1, 2)
         else:
             raise ValueError(
-                'Invalid polynomial `type`. Must be "full", "odd", or "even".'
+                "Invalid `polynomial_type`. Must be \"full\", \"odd\", or "
+                "\"even\"."
             )
 
         max_degree = active_degrees[-1]
@@ -121,7 +129,7 @@ class Polynomial(AbstractFeatureMap):
 
         self.num_features = num_features
         self.combination_matrix = jnp.array(combination_matrix)
-
+        
     def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
         N, nz = z.shape
         if nz != self.nz:
@@ -145,8 +153,32 @@ class Polynomial(AbstractFeatureMap):
         phi_z = jax.vmap(_compute_phi_z, out_axes=1)(jnp.arange(num_combs))
 
         return jnp.hstack((jnp.ones((N, 1)), phi_z)) if self.offset else phi_z
+    
+    def _config_payload(self) -> dict[str, Any]:
+        return {
+            "nz": self.nz,
+            "degree": self.degree,
+            "polynomial_type": self.polynomial_type,
+            "cross_terms": self.cross_terms,
+            "offset": self.offset,
+            "linear": self.linear,
+            "tanh_clip": self.tanh_clip,
+        }
+        
+    @classmethod
+    def _from_config(cls, config: dict[str, Any]) -> Self:
+        return cls(
+            nz=config["nz"],
+            degree=config["degree"],
+            polynomial_type=config["polynomial_type"],
+            cross_terms=config["cross_terms"],
+            offset=config["offset"],
+            linear=config["linear"],
+            tanh_clip=config["tanh_clip"],
+        )
+ 
 
-
+@FEATURE_MAP_REGISTRY.register
 class LegendrePolynomial(AbstractFeatureMap):
     """Legendre polynomial feature map.
 
@@ -160,6 +192,7 @@ class LegendrePolynomial(AbstractFeatureMap):
     offset: bool
     tanh_clip: bool
     num_features: int
+    _type_name: ClassVar[str] = "legendre_polynomial"
 
     def __init__(
         self,
@@ -187,7 +220,7 @@ class LegendrePolynomial(AbstractFeatureMap):
         self.offset = offset
         self.tanh_clip = tanh_clip
         self.num_features = self.nz * self.degree + (1 if self.offset else 0)
-
+        
     def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
 
         def _compute_phi_z(k, state):
@@ -214,7 +247,26 @@ class LegendrePolynomial(AbstractFeatureMap):
         phi_z = jnp.hstack((jnp.ones((N, 1)), z, phi_z))
         return phi_z if self.offset else phi_z[:, 1:]
 
+    def _config_payload(self) -> dict[str, Any]:
+        return {
+            "nz": self.nz,
+            "degree": self.degree,
+            "offset": self.offset,
+            "tanh_clip": self.tanh_clip,
+        }
 
+
+    @classmethod
+    def _from_config(cls, config: dict[str, Any]) -> Self:
+        return cls(
+            nz=config["nz"],
+            degree=config["degree"],
+            offset=config["offset"],
+            tanh_clip=config["tanh_clip"],
+        )
+
+
+@FEATURE_MAP_REGISTRY.register
 class ChebyshevPolynomial(AbstractFeatureMap):
     """Chebyshev polynomial feature map.
 
@@ -225,16 +277,17 @@ class ChebyshevPolynomial(AbstractFeatureMap):
 
     nz: int
     degree: int
-    type: int
+    chebyshev_kind: int
     offset: bool
     tanh_clip: bool
     num_features: int
+    _type_name: ClassVar[str] = "chebyshev_polynomial"
 
     def __init__(
         self,
         nz: int,
         degree: int,
-        type: int,
+        chebyshev_kind: int,
         offset: bool = True,
         tanh_clip: bool = True,
     ) -> None:
@@ -246,7 +299,7 @@ class ChebyshevPolynomial(AbstractFeatureMap):
             Number of input features (dimension of latent signal `z`).
         degree : int
             Maximum polynomial degree.
-        type : int
+        chebyshev_kind : int
             Polynomial type:
             - `1`: First kind (orthogonal w.r.t. 1/sqrt(1 - x²))
             - `2`: Second kind (orthogonal w.r.t. sqrt(1 - x²))
@@ -256,16 +309,18 @@ class ChebyshevPolynomial(AbstractFeatureMap):
             Whether to apply `tanh` clipping to the inputs. Defaults to `True`.
 
         """
-        if type not in (1, 2):
-            raise ValueError('Invalid polynomial `type`. Must be `1` or `2`.')
+        if chebyshev_kind not in (1, 2):
+            raise ValueError(
+                "Invalid `chebyshev_kind`. Must be `1` or `2`."
+            )
 
         self.nz = nz
         self.degree = degree
-        self.type = type
+        self.chebyshev_kind = chebyshev_kind
         self.offset = offset
         self.tanh_clip = tanh_clip
         self.num_features = self.nz * self.degree + (1 if self.offset else 0)
-
+        
     def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
 
         def _compute_phi_z(k, state):
@@ -279,12 +334,31 @@ class ChebyshevPolynomial(AbstractFeatureMap):
 
         N = z.shape[0]
         phi_z0 = jnp.zeros((self.degree - 1, N, self.nz))
-        loop_init = (phi_z0, self.type * z, jnp.ones_like(z))
+        loop_init = (phi_z0, self.chebyshev_kind * z, jnp.ones_like(z))
 
         phi_z = jax.lax.fori_loop(
             2, self.degree + 1, _compute_phi_z, loop_init, unroll=True
         )[0]
 
         phi_z = jnp.transpose(phi_z, (1, 2, 0)).reshape(N, -1)
-        phi_z = jnp.hstack((jnp.ones((N, 1)), self.type * z, phi_z))
+        phi_z = jnp.hstack((jnp.ones((N, 1)), self.chebyshev_kind * z, phi_z))
         return phi_z if self.offset else phi_z[:, 1:]
+    
+    def _config_payload(self) -> dict[str, Any]:
+        return {
+            "nz": self.nz,
+            "degree": self.degree,
+            "chebyshev_kind": self.chebyshev_kind,
+            "offset": self.offset,
+            "tanh_clip": self.tanh_clip,
+        }
+
+    @classmethod
+    def _from_config(cls, config: dict[str, Any]) -> Self:
+        return cls(
+            nz=config["nz"],
+            degree=config["degree"],
+            chebyshev_kind=config["chebyshev_kind"],
+            offset=config["offset"],
+            tanh_clip=config["tanh_clip"],
+        )

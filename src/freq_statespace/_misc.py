@@ -1,5 +1,4 @@
 """Miscellaneous utility functions."""
-
 import jax
 import jax.numpy as jnp
 import nonlinear_benchmarks

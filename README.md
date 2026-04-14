@@ -7,7 +7,7 @@ A flexible [JAX](https://docs.jax.dev/en/latest/index.html)-based package for no
 
 ### Basic usage
 
-The package works with (multiple periods and realisations of) input–output data sequences $u(n)$ and $y(n)$ for $n = 0, \ldots, N-1$, assuming periodic excitation and an integer number of steady-state output periods. The specific NL-LFR structure is defined as:
+The package works with (multiple periods and realizations of) input–output data sequences $u(n)$ and $y(n)$ for $n = 0, \ldots, N-1$, assuming periodic excitation and an integer number of steady-state output periods. The specific NL-LFR structure is defined as:
 ```math
   \begin{align*}
     x(n+1) &= A x(n) + B_u u(n) + B_w w(n),\\
@@ -20,7 +20,7 @@ consisting of linear state-space matrices and a static nonlinear function approx
 
 A typical step-wise identification procedure is as follows:
 
-1. *Best Linear Approximation (BLA) parametrisation.* Initializes the matrices $A$, $B_u$, $C_y$ and $D_{yu}$ using the [frequency-domain subspace method](https://github.com/tomasmckelvey/fsid), and refines these estimates through iterative optimization. If you're only interested in linear state-space models, you can stop the identification process here.
+1. *Best Linear Approximation (BLA) parametrization.* Initializes the matrices $A$, $B_u$, $C_y$ and $D_{yu}$ using the [frequency-domain subspace method](https://github.com/tomasmckelvey/fsid), and refines these estimates through iterative optimization. If you're only interested in linear state-space models, you can stop the identification process here.
 2. *NL-LFR initialization.* Applies the [frequency-domain inference and learning method](https://arxiv.org/abs/2503.14409) to efficiently initialize the remaining model parameters while keeping the BLA parameters fixed. This step requires that $f(\cdot)$ is linear in the parameters, i.e., $f(\cdot)=\beta^\top\phi(\cdot)$, with $\beta$ the parameter vector and $\phi(\cdot)$ the nonlinear feature mapping (e.g., polynomial features).
 3. *NL-LFR optimization.* Performs iterative refinement of all model parameters using time-domain simulations. This is the most computationally demanding step, mainly due to the sequential nature of the forward simulations. Fortunately, the previous steps should have provided an initialization that is already close to a good local minimum.
 
@@ -79,6 +79,13 @@ nllfr = fss.nonlin.connect(bla, neural_net)
 nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.55%, 100 iters, 354ms/iter
 ```
 > **Note:** Iteration timings were measured on an NVIDIA T600 Laptop GPU.
+
+Serialization of models can be achieved like so:
+```python
+path = "models/nllfr.zip"
+fss.save_model(nllfr, path)
+nllfr_loaded = fss.load_model(path)
+```
 
 The `examples/` folder also provides Jupyter notebooks for more challenging benchmark systems, with additional notes on hyperparameter tuning and solver configurations.
 
