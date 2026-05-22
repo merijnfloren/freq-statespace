@@ -94,7 +94,16 @@ Every identification problem starts by casting the time-domain input-output data
 
 
 ## Citation
-If you use this code in your work, please cite it as ([arXiv link](https://arxiv.org/abs/2503.14409)):
+If you use this package in your work, please cite:
+```bibtex
+@inproceedings{floren2026freq,
+  title={Freq-statespace: a Python package for identification of (non)linear state-space models from periodic input-output data},
+  author={Floren, Merijn and Swevers, Jan},
+  booktitle={45th Benelux Meeting on Systems and Control},
+  year={2026}
+}
+```
+If you use the inference and learning method, please also cite the corresponding [paper](https://arxiv.org/abs/2503.14409):
 ```bibtex
 @article{floren2025inference,
   title={Inference and Learning of Nonlinear LFR State-Space Models},
