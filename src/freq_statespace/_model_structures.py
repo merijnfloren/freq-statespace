@@ -542,7 +542,7 @@ def _validate_user_inputs(
 ) -> None:
     
     nu = u.shape[1] if u.ndim > 1 else 1
-    if nu != model.B_u.shape[1] or nu != model.D_yu.shape[1] or nu != model.D_zu.shape[1]:
+    if nu != model.B_u.shape[1] or nu != model.D_yu.shape[1]:
         msg = (
             f"Input signal has {nu} channel(s), but model expects "
             f"{model.B_u.shape[1]} channel(s)."
