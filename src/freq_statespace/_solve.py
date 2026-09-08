@@ -68,10 +68,11 @@ def _get_device(device: DeviceLike):
         # experimental JAX feature; the API may change.
         candidates = jax.devices(platform)
     except RuntimeError as e:
-        raise RuntimeError(
+        msg = (
             f"Requested device '{platform}', but no such device is available. "
             f"Available platforms: {sorted(_available_platforms())}"
-        ) from e
+        )
+        raise RuntimeError(msg) from e
 
     return candidates[0]
 

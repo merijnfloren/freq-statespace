@@ -153,7 +153,8 @@ def evaluate_model_performance(
 
     """
     if not isinstance(model, ModelBLA | ModelNonlinearLFR):
-        raise TypeError("`model` must be either `ModelBLA` or `ModelNonlinearLFR`.")
+        msg = "`model` must be either `ModelBLA` or `ModelNonlinearLFR`."
+        raise TypeError(msg)
 
     u, y = data.time.u, data.time.y
     N, ny, R = y.shape

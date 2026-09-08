@@ -163,15 +163,20 @@ def create_data_object(
 
     # Validate dimensions
     if u.ndim != 4:
-        raise ValueError("`u` must have 4 dimensions: (N, nu, R, P).")
+        msg = "`u` must have 4 dimensions: (N, nu, R, P)."
+        raise ValueError(msg)
     if y.ndim != 4:
-        raise ValueError("`y` must have 4 dimensions: (N, ny, R, P).")
+        msg = "`y` must have 4 dimensions: (N, ny, R, P)."
+        raise ValueError(msg)
     if u.shape[0] != y.shape[0]:
-        raise ValueError("`u` and `y` must have same number of time samples.")
+        msg = "`u` and `y` must have same number of time samples."
+        raise ValueError(msg)
     if u.shape[2] != y.shape[2]:
-        raise ValueError("`u` and `y` must have same number of realizations.")
+        msg = "`u` and `y` must have same number of realizations."
+        raise ValueError(msg)
     if u.shape[3] != y.shape[3]:
-        raise ValueError("`u` and `y` must have same number of periods.")
+        msg = "`u` and `y` must have same number of periods."
+        raise ValueError(msg)
 
     ts = 1 / fs
     N, nu, R, P = u.shape

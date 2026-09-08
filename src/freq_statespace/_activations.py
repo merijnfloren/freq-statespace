@@ -55,9 +55,8 @@ def _jsonify_activation_value(value: Any) -> Any:
         return {str(k): _jsonify_activation_value(v) for k, v in value.items()}
     if isinstance(value, str | int | float | bool) or value is None:
         return value
-    raise TypeError(
-        "Activation kwargs must be JSON-serializable scalars, lists, or dictionaries."
-    )
+    msg = "Activation kwargs must be JSON-serializable scalars, lists, or dictionaries."
+    raise TypeError(msg)
 
 
 def activation_to_config(activation: Callable) -> dict[str, Any]:
@@ -72,10 +71,11 @@ def activation_to_config(activation: Callable) -> dict[str, Any]:
 
     if isinstance(activation, functools.partial):
         if activation.args:
-            raise TypeError(
+            msg = (
                 "Activation serialization only supports keyword arguments; "
                 "positional partial arguments are not supported."
             )
+            raise TypeError(msg)
         func = activation.func
         kwargs = dict(activation.keywords or {})
     else:
@@ -83,10 +83,11 @@ def activation_to_config(activation: Callable) -> dict[str, Any]:
 
     name = getattr(func, "__name__", None)
     if name is None or registry.get(name) is not func:
-        raise TypeError(
+        msg = (
             "Activation must be an elementwise `jax.nn` function or a "
             "`functools.partial` wrapping one."
         )
+        raise TypeError(msg)
 
     json.dumps({k: _jsonify_activation_value(v) for k, v in kwargs.items()})
     return {
@@ -109,19 +110,19 @@ def activation_from_config(data: str | dict[str, Any]) -> Callable:
         name = data.get("name")
         kwargs = data.get("kwargs", {})
         if not isinstance(name, str):
-            raise ValueError("Activation config must contain a string 'name'.")
+            msg = "Activation config must contain a string 'name'."
+            raise ValueError(msg)
         if not isinstance(kwargs, dict):
-            raise ValueError("Activation config field 'kwargs' must be a dictionary.")
+            msg = "Activation config field 'kwargs' must be a dictionary."
+            raise ValueError(msg)
     else:
-        raise TypeError(
-            f"Activation config must be a string or dictionary, got {type(data)}."
-        )
+        msg = f"Activation config must be a string or dictionary, got {type(data)}."
+        raise TypeError(msg)
 
     func = registry.get(name)
     if func is None:
         supported = ", ".join(sorted(registry))
-        raise ValueError(
-            f"Unsupported activation '{name}'. Supported activations are: {supported}."
-        )
+        msg = f"Unsupported activation '{name}'. Supported activations are: {supported}."
+        raise ValueError(msg)
 
     return functools.partial(func, **kwargs) if kwargs else func

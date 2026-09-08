@@ -55,34 +55,29 @@ class SerializationRegistry:
     def register(self, cls: type[T]) -> type[T]:
         type_name = cls.type_name()
         if type_name in self._types:
-            raise ValueError(
-                f"Duplicate {self.family_name} serialization type_name: {type_name}."
-            )
+            msg = f"Duplicate {self.family_name} serialization type_name: {type_name}."
+            raise ValueError(msg)
         self._types[type_name] = cls
         return cls
 
     def from_config(self, data: dict[str, Any]) -> Serializable:
         if not isinstance(data, dict):
-            raise TypeError(
-                f"{self.family_name} config must be a dictionary, got {type(data)}."
-            )
+            msg = f"{self.family_name} config must be a dictionary, got {type(data)}."
+            raise TypeError(msg)
 
         type_name = data.get("type_name")
         config = data.get("config")
         if not isinstance(type_name, str):
-            raise ValueError(
-                f"{self.family_name} config must contain a string 'type_name'."
-            )
+            msg = f"{self.family_name} config must contain a string 'type_name'."
+            raise ValueError(msg)
         if not isinstance(config, dict):
-            raise ValueError(
-                f"{self.family_name} config must contain a dictionary 'config'."
-            )
+            msg = f"{self.family_name} config must contain a dictionary 'config'."
+            raise ValueError(msg)
 
         cls = self._types.get(type_name)
         if cls is None:
-            raise ValueError(
-                f"Unknown {self.family_name} serialization type_name: {type_name}."
-            )
+            msg = f"Unknown {self.family_name} serialization type_name: {type_name}."
+            raise ValueError(msg)
 
         return cls._from_config(config)
 

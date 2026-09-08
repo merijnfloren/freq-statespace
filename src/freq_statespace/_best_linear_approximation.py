@@ -53,11 +53,12 @@ def nonparametric_bla(U: np.ndarray, Y: np.ndarray) -> NonparametricBLA:
     """
     nu, R = U.shape[1:3]
     if R < nu:
-        raise ValueError(
+        msg = (
             "For multi-input systems, the number of realizations (R) must be "
             "at least equal to the number of inputs (nu) to compute the "
             "frequency response matrix."
         )
+        raise ValueError(msg)
     
     G = _compute_frequency_response(U, Y)  # shape (F, ny, nu, M, P)
     M, P = G.shape[3:5]
@@ -134,9 +135,8 @@ def subspace_id(
     
     nq = nx + 1 if nq is None else nq
     if nq <= nx:
-        raise ValueError(
-            f"Subspace dimension nq={nq} must be greater than state dimension nx={nx}."
-        )
+        msg = f"Subspace dimension nq={nq} must be greater than state dimension nx={nx}."
+        raise ValueError(msg)
 
     freq_data = data.freq
     input_output_mode, freq_weighting = _validate_inputs(
@@ -610,10 +610,7 @@ def _inverse_softplus(x: np.ndarray) -> np.ndarray:
 def _validate_stability_margin(stability_margin: float) -> None:
     """Validate the unit-circle margin used by the enforced optimizer."""
     if not 0 < stability_margin < 1:
-        msg = (
-            "stability_margin must lie strictly between 0 and 1; "
-            f"got {stability_margin}."
-        )
+        msg = f"stability_margin must lie strictly between 0 and 1; got {stability_margin}."
         raise ValueError(msg)
 
 

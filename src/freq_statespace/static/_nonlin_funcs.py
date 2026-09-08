@@ -94,7 +94,8 @@ class BasisFunctionModel(AbstractNonlinearFunction):
 
         phi = FEATURE_MAP_REGISTRY.from_config(config["phi"])
         if not isinstance(phi, AbstractFeatureMap):
-            raise TypeError("Deserialized `phi` is not a feature map.")
+            msg = "Deserialized `phi` is not a feature map."
+            raise TypeError(msg)
         return cls(
             nw=config["nw"],
             phi=phi,

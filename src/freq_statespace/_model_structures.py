@@ -296,7 +296,8 @@ class ModelNonlinearLFR(ModelBLA):
         nu, ny, nx = config["nu"], config["ny"], config["nx"]
         func_static = NONLINEAR_FUNCTION_REGISTRY.from_config(config["func_static"])
         if not isinstance(func_static, AbstractNonlinearFunction):
-            raise TypeError("Deserialized func_static is not a nonlinear function.")
+            msg = "Deserialized func_static is not a nonlinear function."
+            raise TypeError(msg)
 
         func_config = config["func_static"]["config"]
         nw = func_config["nw"]
@@ -542,41 +543,42 @@ def _validate_user_inputs(
     
     nu = u.shape[1] if u.ndim > 1 else 1
     if nu != model.B_u.shape[1] or nu != model.D_yu.shape[1] or nu != model.D_zu.shape[1]:
-        raise ValueError(
+        msg = (
             f"Input signal has {nu} channel(s), but model expects "
             f"{model.B_u.shape[1]} channel(s)."
         )
+        raise ValueError(msg)
     
     if u.ndim != 1 and u.ndim != 2 and u.ndim != 3 and u.ndim != 4:
-        raise ValueError(f"`u` must have 1 to 4 dimensions, got {u.ndim}D.")
+        msg = f"`u` must have 1 to 4 dimensions, got {u.ndim}D."
+        raise ValueError(msg)
     
     if x0 is not None:
         # Check if 1D or 2D
         if x0.ndim != 1 and x0.ndim != 2:
-            raise ValueError(f"`x0` must be 1D or 2D, got {x0.ndim}D.")
+            msg = f"`x0` must be 1D or 2D, got {x0.ndim}D."
+            raise ValueError(msg)
         
         # Check consistency with `u`
         if u.ndim >= 3:
             if x0.ndim == 1:
-                raise ValueError(
-                    "`x0` must be 2D to match number of realizations in `u`."
-                )
+                msg = "`x0` must be 2D to match number of realizations in `u`."
+                raise ValueError(msg)
             if u.shape[2] != x0.shape[-1]:
-                raise ValueError(
+                msg = (
                     f"`x0` has {x0.shape[-1]} realizations, but `u` has "
                     f"{u.shape[2]} realizations."
                 )
+                raise ValueError(msg)
         else:
             if x0.ndim == 2:
-                raise ValueError(
-                    f"`x0` must be 1D since `u` is {u.ndim}D < 3D."
-                )
+                msg = f"`x0` must be 1D since `u` is {u.ndim}D < 3D."
+                raise ValueError(msg)
             
         # Check consistency of state dimension
         if x0.shape[0] != model.A.shape[0]:
-            raise ValueError(
-                f"`x0` must have shape ({model.A.shape[0]}, ...), got {x0.shape}."
-            )
+            msg = f"`x0` must have shape ({model.A.shape[0]}, ...), got {x0.shape}."
+            raise ValueError(msg)
     else:
         if u.ndim >= 3:
             x0 = jnp.zeros((model.A.shape[0], u.shape[2]))
@@ -585,5 +587,6 @@ def _validate_user_inputs(
             
     if offset is not None:
         if not (isinstance(offset, int) and offset >= 0):
-            raise ValueError("`offset` must be a non-negative integer.")
+            msg = "`offset` must be a non-negative integer."
+            raise ValueError(msg)
  

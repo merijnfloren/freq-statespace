@@ -104,10 +104,8 @@ class Polynomial(AbstractFeatureMap):
         elif self.polynomial_type == "even":
             active_degrees = range(2, self.degree + 1, 2)
         else:
-            raise ValueError(
-                "Invalid `polynomial_type`. Must be \"full\", \"odd\", or "
-                "\"even\"."
-            )
+            msg = 'Invalid `polynomial_type`. Must be "full", "odd", or "even".'
+            raise ValueError(msg)
 
         max_degree = active_degrees[-1]
         combination_matrix = []
@@ -133,10 +131,8 @@ class Polynomial(AbstractFeatureMap):
     def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
         N, nz = z.shape
         if nz != self.nz:
-            raise ValueError(
-                "Input size does not match the basis function size: "
-                "`z.shape[1] != nz`."
-            )
+            msg = "Input size does not match the basis function size: `z.shape[1] != nz`."
+            raise ValueError(msg)
 
         if self.tanh_clip:
             z = jnp.tanh(z)
@@ -310,9 +306,8 @@ class ChebyshevPolynomial(AbstractFeatureMap):
 
         """
         if chebyshev_kind not in (1, 2):
-            raise ValueError(
-                "Invalid `chebyshev_kind`. Must be `1` or `2`."
-            )
+            msg = "Invalid `chebyshev_kind`. Must be `1` or `2`."
+            raise ValueError(msg)
 
         self.nz = nz
         self.degree = degree
