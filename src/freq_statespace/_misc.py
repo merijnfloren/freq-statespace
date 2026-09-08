@@ -9,6 +9,19 @@ from ._model_structures import ModelBLA, ModelNonlinearLFR
 from ._solve import SolveResult
 
 
+def right_solve(
+    a: jnp.ndarray | np.ndarray, b: jnp.ndarray | np.ndarray
+) -> jnp.ndarray | np.ndarray:
+    """Solve ``x @ b = a`` for ``x`` without explicitly inverting ``b``.
+
+    NumPy inputs stay in NumPy, while JAX arrays and tracers use JAX so the
+    operation remains compatible with differentiation and JIT compilation.
+    """
+    if isinstance(a, np.ndarray) and isinstance(b, np.ndarray):
+        return np.linalg.solve(b.T, a.T).T
+    return jnp.linalg.solve(b.T, a.T).T
+
+
 def load_and_preprocess_silverbox_data() -> InputOutputData:
     """Load (from `nonlinear_benchmarks`) and preprocesses the Silverbox dataset.
     

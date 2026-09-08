@@ -1,11 +1,13 @@
 """Nonparametric BLA, parametric subspace identification, and optimizer."""
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
+from scipy.linalg import solve_discrete_lyapunov
 
 from . import _misc
-from ._config import PRINT_EVERY, SOLVER, DeviceLike
+from ._config import PRINT_EVERY, SOLVER, STABILITY_MARGIN, DeviceLike
 from ._data_manager import FrequencyData, InputOutputData, NonparametricBLA
 from ._model_structures import ModelBLA
 from ._solve import SolveResult, solve
@@ -13,6 +15,16 @@ from .dep import fsid
 
 
 MAX_ITER = 1000  # when changing, also update corresponding docstring!
+
+
+class _StableBLAParameters(eqx.Module):
+    """Unconstrained parameters of a BLA with a contractive A matrix."""
+
+    theta_L: jnp.ndarray
+    theta_W: jnp.ndarray
+    B_u: jnp.ndarray
+    C_y: jnp.ndarray
+    D_yu: jnp.ndarray
 
 
 ### Public functions ###
@@ -149,12 +161,14 @@ def optimize(
     data: InputOutputData,
     *,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
+    enforce_stability: bool = False,
+    stability_margin: float = STABILITY_MARGIN,
     freq_weighting: bool = True,
     input_output_mode: bool = False,
     max_iter: int = MAX_ITER,
     print_every: int = PRINT_EVERY,
     return_solve_details: bool = False,
-    device: DeviceLike = None
+    device: DeviceLike = None,
 ) -> ModelBLA | tuple[ModelBLA, SolveResult]:
     """Optimize the BLA parameters via a frequency-domain fit to G_bla.
 
@@ -168,6 +182,13 @@ def optimize(
         Any least-squares solver or general minimization solver from the
         Optimistix or Optax libraries. Defaults to 
         `optx.LevenbergMarquardt(rtol=1e-3, atol=1e-6)`.
+    enforce_stability : bool
+        Whether to constrain the state-transition matrix to be stable throughout
+        optimization. Defaults to `False`.
+    stability_margin : float
+        Margin from the unit circle when ``enforce_stability`` is enabled. The
+        optimizer enforces a spectral norm below ``1 - stability_margin``.
+        Must lie in ``(0, 1)``. Defaults to ``1e-4``.
     freq_weighting : bool
         Whether to use frequency weighting based on the inverse of the total variance
         on the nonparametric BLA. Defaults to `True`.
@@ -198,10 +219,16 @@ def optimize(
         `return_solve_details` is `True`.
 
     """
+    if enforce_stability:
+        _validate_stability_margin(stability_margin)
+
     logging_enabled = print_every != -1
     
     if logging_enabled:
-        header = " BLA optimization "
+        header = (
+            " Stability-enforced BLA optimization "
+            if enforce_stability else " BLA optimization "
+        )
         print(f"{header:=^72}")
     
     input_output_mode, freq_weighting = _validate_inputs(
@@ -212,10 +239,16 @@ def optimize(
     model = eqx.tree_at(lambda tree: tree.norm, model, replace=None)
     
     # Run the optimization
-    model, solve_result = _optimize(
-        model, data, input_output_mode, freq_weighting,
-        logging_enabled, solver, max_iter, print_every, device
-    )
+    if enforce_stability:
+        model, solve_result = _optimize_stable(
+            model, data, input_output_mode, freq_weighting, logging_enabled,
+            solver, max_iter, print_every, device, stability_margin
+        )
+    else:
+        model, solve_result = _optimize(
+            model, data, input_output_mode, freq_weighting,
+            logging_enabled, solver, max_iter, print_every, device
+        )
     
     # Add Normalizer back to the model
     model = eqx.tree_at(lambda tree: tree.norm, model, replace=data.norm)
@@ -229,6 +262,58 @@ def optimize(
     if return_solve_details:
         return model, solve_result
     return model
+
+
+def _optimize_stable(
+    model: ModelBLA,
+    data: InputOutputData,
+    input_output_mode: bool,
+    freq_weighting: bool,
+    logging_enabled: bool,
+    solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser,
+    max_iter: int,
+    print_every: int,
+    device: DeviceLike,
+    stability_margin: float,
+) -> tuple[ModelBLA, SolveResult]:
+    """Optimize a BLA with a contractive state-transition parameterization."""
+    theta0 = _stable_parameters_from_model(
+        model, stability_margin
+    )
+
+    if input_output_mode:
+        args = (
+            model.ts,
+            jnp.asarray(data.freq.U)[data.freq.f_idx],
+            jnp.asarray(data.freq.Y)[data.freq.f_idx],
+            data.freq.f[data.freq.f_idx],
+            stability_margin,
+        )
+        loss_fn = _loss_stable_output_spectrum
+    else:
+        G_bla = data.freq.G_bla
+        W = 1 / G_bla.var_tot if freq_weighting else jnp.ones_like(G_bla.G)
+        args = (
+            model.ts,
+            jnp.asarray(G_bla.G),
+            data.freq.f[data.freq.f_idx],
+            W,
+            stability_margin,
+        )
+        loss_fn = _loss_stable_frequency_response
+
+    if logging_enabled:
+        print("Starting iterative optimization...")
+    solve_result = solve(
+        theta0, solver, args, loss_fn, max_iter, print_every, device
+    )
+
+    model = _stable_model_from_parameters(
+        solve_result.theta, model.ts, stability_margin, norm=None
+    )
+    model = _normalize_states(model, data)
+
+    return model, solve_result
 
 
 ### Internal helpers ###
@@ -277,8 +362,7 @@ def _compute_frequency_response(U: np.ndarray, Y: np.ndarray) -> np.ndarray:
                 U_block = U[kf, :, start_idx:end_idx, kp]
                 Y_block = Y[kf, :, start_idx:end_idx, kp]
 
-                U_inv = np.linalg.solve(U_block, np.eye(nu))
-                G[kf, :, :, kr, kp] = Y_block @ U_inv
+                G[kf, :, :, kr, kp] = _misc.right_solve(Y_block, U_block)
 
     return G
 
@@ -401,6 +485,146 @@ def _loss_output_spectrum(theta_dyn: ModelBLA, args: tuple) -> tuple:
     Y_par = theta._frequency_response(freqs) @ U_nonpar
     loss = jnp.sqrt(1 / Y_nonpar.size) * (Y_par - Y_nonpar)
     return _misc.real_valued(loss), (_misc.scalar_valued(loss),)
+
+
+def _loss_stable_frequency_response(
+    theta: _StableBLAParameters, args: tuple
+) -> tuple:
+    """Compute the complex-FRF residual for stable BLA parameters."""
+    ts, G_nonpar, freqs, W, stability_margin = args
+    model = _stable_model_from_parameters(theta, ts, stability_margin, norm=None)
+    G_par = model._frequency_response(freqs)
+    loss = jnp.sqrt(W / G_nonpar.size) * (G_par - G_nonpar)
+    return _misc.real_valued(loss), (_misc.scalar_valued(loss),)
+
+
+def _loss_stable_output_spectrum(
+    theta: _StableBLAParameters, args: tuple
+) -> tuple:
+    """Compute the output-spectrum residual for stable BLA parameters."""
+    ts, U_nonpar, Y_nonpar, freqs, stability_margin = args
+    model = _stable_model_from_parameters(theta, ts, stability_margin, norm=None)
+    Y_par = model._frequency_response(freqs) @ U_nonpar
+    loss = jnp.sqrt(1 / Y_nonpar.size) * (Y_par - Y_nonpar)
+    return _misc.real_valued(loss), (_misc.scalar_valued(loss),)
+
+
+def _stable_model_from_parameters(
+    theta: _StableBLAParameters,
+    ts: float,
+    stability_margin: float,
+    norm,
+) -> ModelBLA:
+    """Construct a BLA whose A matrix is contractive by construction."""
+    A = _stable_A_from_parameters(
+        theta.theta_L, theta.theta_W, theta.B_u.shape[0], stability_margin
+    )
+    return ModelBLA(A, theta.B_u, theta.C_y, theta.D_yu, ts, norm)
+
+
+def _stable_A_from_parameters(
+    theta_L: jnp.ndarray,
+    theta_W: jnp.ndarray,
+    nx: int,
+    stability_margin: float,
+) -> jnp.ndarray:
+    """Map unconstrained variables to an A with norm below a fixed bound."""
+    lower_rows, lower_cols = np.tril_indices(nx)
+    diagonal = lower_rows == lower_cols
+    upper_rows, upper_cols = np.triu_indices(nx, k=1)
+
+    L_entries = theta_L.at[diagonal].set(jax.nn.softplus(theta_L[diagonal]))
+    L = jnp.zeros((nx, nx), dtype=theta_L.dtype)
+    L = L.at[lower_rows, lower_cols].set(L_entries)
+    W = jnp.zeros((nx, nx), dtype=theta_W.dtype)
+    W = W.at[upper_rows, upper_cols].set(theta_W)
+    W = W.at[upper_cols, upper_rows].set(-theta_W)
+
+    M = L @ L.T + W
+    I = jnp.eye(nx)
+    cayley_A = _misc.right_solve(I - M, I + M)
+    return (1 - stability_margin) * cayley_A
+
+
+def _stable_parameters_from_model(
+    model: ModelBLA,
+    stability_margin: float,
+) -> _StableBLAParameters:
+    """Create stable parameters from a possibly unstable BLA realization."""
+    A = np.asarray(model.A)
+    B_u = np.asarray(model.B_u)
+    C_y = np.asarray(model.C_y)
+    D_yu = np.asarray(model.D_yu)
+    _validate_real_finite_model(A, B_u, C_y, D_yu)
+    A = A.astype(float)
+
+    stability_radius = 1 - stability_margin
+    spectral_radius = np.max(np.abs(np.linalg.eigvals(A)))
+    if spectral_radius > stability_radius:
+        A = A * (stability_radius / spectral_radius)
+
+    # Convert Schur-stable A into Euclidean contractive coordinates. This is
+    # exactly a similarity transformation, so B and C must follow it too.
+    # P = _misc.solve_discrete_lyapunov(A, np.eye(A.shape[0]))
+    P = solve_discrete_lyapunov(A.T, np.eye(A.shape[0]))
+    P = 0.5 * (P + P.T)
+    T = np.linalg.cholesky(P).T
+    A = _misc.right_solve(T @ A, T)
+    B_u = T @ B_u
+    C_y = _misc.right_solve(C_y, T)
+
+    # Keep the Lyapunov coordinates strictly within the radius implied by the
+    # requested unit-circle margin before inverting the Cayley map.
+    singular_value = np.linalg.svd(A, compute_uv=False)[0]
+    target_norm = stability_radius - min(1e-6, 0.5 * stability_radius)
+    if singular_value >= target_norm:
+        A = A * (target_norm / singular_value)
+
+    A_unbounded = A / stability_radius
+    I = np.eye(A.shape[0])
+    M = np.linalg.solve(I + A_unbounded, I - A_unbounded)
+    symmetric_M = 0.5 * (M + M.T)
+    W = 0.5 * (M - M.T)
+    L = np.linalg.cholesky(symmetric_M)
+
+    lower_rows, lower_cols = np.tril_indices(A.shape[0])
+    diagonal = lower_rows == lower_cols
+    theta_L = L[lower_rows, lower_cols]
+    theta_L[diagonal] = _inverse_softplus(theta_L[diagonal])
+    upper_rows, upper_cols = np.triu_indices(A.shape[0], k=1)
+
+    return _StableBLAParameters(
+        theta_L=jnp.asarray(theta_L),
+        theta_W=jnp.asarray(W[upper_rows, upper_cols]),
+        B_u=jnp.asarray(B_u),
+        C_y=jnp.asarray(C_y),
+        D_yu=jnp.asarray(D_yu),
+    )
+
+
+def _inverse_softplus(x: np.ndarray) -> np.ndarray:
+    """Numerically stable inverse of softplus for strictly positive inputs."""
+    return np.where(x > 20, x, np.log(np.expm1(x)))
+
+
+def _validate_stability_margin(stability_margin: float) -> None:
+    """Validate the unit-circle margin used by the enforced optimizer."""
+    if not 0 < stability_margin < 1:
+        msg = (
+            "stability_margin must lie strictly between 0 and 1; "
+            f"got {stability_margin}."
+        )
+        raise ValueError(msg)
+
+
+def _validate_real_finite_model(*matrices: np.ndarray) -> None:
+    """Reject models that cannot be used by the real-valued parameterization."""
+    if any(np.iscomplexobj(matrix) for matrix in matrices):
+        msg = "Stability-enforced optimization requires a real-valued model."
+        raise ValueError(msg)
+    if any(not np.all(np.isfinite(matrix)) for matrix in matrices):
+        msg = "Stability-enforced optimization requires finite model matrices."
+        raise ValueError(msg)
 
 
 def _normalize_states(model: ModelBLA, data: InputOutputData) -> ModelBLA:
