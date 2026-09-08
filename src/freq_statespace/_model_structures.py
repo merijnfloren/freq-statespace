@@ -540,6 +540,13 @@ def _validate_user_inputs(
     x0: jnp.ndarray | None,
 ) -> None:
     
+    nu = u.shape[1] if u.ndim > 1 else 1
+    if nu != model.B_u.shape[1] or nu != model.D_yu.shape[1] or nu != model.D_zu.shape[1]:
+        raise ValueError(
+            f"Input signal has {nu} channel(s), but model expects "
+            f"{model.B_u.shape[1]} channel(s)."
+        )
+    
     if u.ndim != 1 and u.ndim != 2 and u.ndim != 3 and u.ndim != 4:
         raise ValueError(f"`u` must have 1 to 4 dimensions, got {u.ndim}D.")
     
