@@ -68,6 +68,12 @@ ignore = ["D203", "D213", "D416"]
 lines-after-imports = 2
 order-by-type = true
 
-[tool.uv.sources]
-best-linear-approximation = { path = "../best-linear-approximation", editable = true }
+[dependency-groups]
+dev = [
+    "ipykernel>=7.4.0",
+    "jax[cuda12]>=0.11.1",
+    "matplotlib>=3.11.2",
+    "nonlinear-benchmarks>=1.0.1",
+    "optax>=0.2.8",
+]
 
