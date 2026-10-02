@@ -495,9 +495,7 @@ def _loss_inference_and_learning(
 
     # 2a) Compute beta
     phi_z_star = args.phi._compute_features(z_star_stacked)
-    beta_hat = jnp.linalg.solve(
-        phi_z_star.T @ phi_z_star, phi_z_star.T @ w_star_stacked
-    )
+    beta_hat = jnp.linalg.lstsq(phi_z_star, w_star_stacked)[0]
 
     # 2b) Perform fixed-point iterations
     def _fixed_point_iteration(_, phi_z):
