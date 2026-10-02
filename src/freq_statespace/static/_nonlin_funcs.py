@@ -1,18 +1,23 @@
 """General static nonlinear function mappings (mapping `z` to `w`)."""
+from __future__ import annotations
+
 from abc import abstractmethod
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from typing_extensions import Self
 
-from .. import _misc
-from .._activations import activation_from_config, activation_to_config
-from .._config import SEED
-from .._serialize import NONLINEAR_FUNCTION_REGISTRY, Serializable
-from ..static._feature_maps import AbstractFeatureMap
+from freq_statespace import _misc
+from freq_statespace._activations import activation_from_config, activation_to_config
+from freq_statespace._config import SEED
+from freq_statespace._serialize import NONLINEAR_FUNCTION_REGISTRY, Serializable
+from freq_statespace.static._feature_maps import AbstractFeatureMap
+
+if TYPE_CHECKING:
+    from jaxtyping import Array, Float
 
 
 class AbstractNonlinearFunction(eqx.Module, Serializable):
@@ -30,7 +35,9 @@ class AbstractNonlinearFunction(eqx.Module, Serializable):
     num_parameters: eqx.AbstractVar[int]
 
     @abstractmethod
-    def _evaluate(self, z: jnp.ndarray) -> jnp.ndarray:
+    def _evaluate(
+        self, z: Float[Array, "... nz"]
+    ) -> Float[Array, "... nw"]:
         """Evaluate the nonlinear function.
 
         From inputs of shape (..., `nz`) to outputs of shape (..., `nw`).
@@ -49,7 +56,7 @@ class BasisFunctionModel(AbstractNonlinearFunction):
 
     nw: int
     nz: int
-    beta: jnp.ndarray
+    beta: Float[Array, "n_features nw"]
     phi: AbstractFeatureMap
     num_parameters: int
     seed: int = eqx.field(repr=False)
@@ -90,7 +97,7 @@ class BasisFunctionModel(AbstractNonlinearFunction):
         
     @classmethod
     def _from_config(cls, config: dict[str, Any]) -> Self:
-        from .._serialize import FEATURE_MAP_REGISTRY
+        from freq_statespace._serialize import FEATURE_MAP_REGISTRY
 
         phi = FEATURE_MAP_REGISTRY.from_config(config["phi"])
         if not isinstance(phi, AbstractFeatureMap):
@@ -102,7 +109,9 @@ class BasisFunctionModel(AbstractNonlinearFunction):
             seed=config["seed"],
         )
 
-    def _evaluate(self, z: jnp.ndarray) -> jnp.ndarray:
+    def _evaluate(
+        self, z: Float[Array, "n_samples nz"]
+    ) -> Float[Array, "n_samples nw"]:
         return self.phi._compute_features(z) @ self.beta
     
     def _config_payload(self) -> dict[str, Any]:
@@ -204,7 +213,9 @@ class NeuralNetwork(AbstractNonlinearFunction):
             bias=config["bias"],
         )
 
-    def _evaluate(self, z: jnp.ndarray) -> jnp.ndarray:
+    def _evaluate(
+        self, z: Float[Array, "n_samples nz"]
+    ) -> Float[Array, "n_samples nw"]:
         return jax.vmap(self.model)(z)
     
     def _config_payload(self) -> dict[str, Any]:

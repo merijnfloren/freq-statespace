@@ -21,5 +21,6 @@ build/
 .flake8
 .ruff_cache/
 
-# Codex
+# AI tools
 .codex
+AGENTS.md

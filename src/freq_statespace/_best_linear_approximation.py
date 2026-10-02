@@ -1,4 +1,8 @@
 """Nonparametric BLA, parametric subspace identification, and optimizer."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -6,12 +10,17 @@ import numpy as np
 import optimistix as optx
 from scipy.linalg import solve_discrete_lyapunov
 
-from . import _misc
-from ._config import PRINT_EVERY, SOLVER, STABILITY_MARGIN, DeviceLike
-from ._data_manager import FrequencyData, InputOutputData, NonparametricBLA
-from ._model_structures import ModelBLA
-from ._solve import SolveResult, solve
-from .dep import fsid
+from freq_statespace import _misc
+from freq_statespace._config import PRINT_EVERY, SOLVER, STABILITY_MARGIN, DeviceLike
+from freq_statespace._data_manager import FrequencyData, InputOutputData, NonparametricBLA
+from freq_statespace._model_structures import ModelBLA
+from freq_statespace._solve import SolveResult, solve
+from freq_statespace.dep import fsid
+
+if TYPE_CHECKING:
+    from jaxtyping import Array, Float
+
+    from freq_statespace._typing import ComplexArray, RealArray
 
 
 MAX_ITER = 1000  # when changing, also update corresponding docstring!
@@ -20,72 +29,14 @@ MAX_ITER = 1000  # when changing, also update corresponding docstring!
 class _StableBLAParameters(eqx.Module):
     """Unconstrained parameters of a BLA with a contractive A matrix."""
 
-    theta_L: jnp.ndarray
-    theta_W: jnp.ndarray
-    B_u: jnp.ndarray
-    C_y: jnp.ndarray
-    D_yu: jnp.ndarray
+    theta_L: Float[Array, "n_lower_triangle_entries"]
+    theta_W: Float[Array, "n_upper_triangle_entries"]
+    B_u: Float[Array, "nx nu"]
+    C_y: Float[Array, "ny nx"]
+    D_yu: Float[Array, "ny nu"]
 
 
 ### Public functions ###
-
-
-def nonparametric_bla(U: np.ndarray, Y: np.ndarray) -> NonparametricBLA:
-    """Compute nonparametric BLA and variance estimates from input-output data.
-
-    Parameters
-    ----------
-    U : np.ndarray, shape (F, nu, R, P)
-        DFT input spectrum at the excited frequencies across realizations and periods.
-    Y : np.ndarray, shape (F, ny, R, P)
-        DFT output spectrum at the excited frequencies across realizations and periods.
-
-    Returns
-    -------
-    `NonparametricBLA`
-        Nonparametric BLA estimate with frequency response and variance estimates.
-        
-    Raises
-    ------
-    ValueError
-        If the number of realizations R is less than the number of inputs nu.
-
-    """
-    nu, R = U.shape[1:3]
-    if R < nu:
-        msg = (
-            "For multi-input systems, the number of realizations (R) must be "
-            "at least equal to the number of inputs (nu) to compute the "
-            "frequency response matrix."
-        )
-        raise ValueError(msg)
-    
-    G = _compute_frequency_response(U, Y)  # shape (F, ny, nu, M, P)
-    M, P = G.shape[3:5]
-
-    # Compute noise variance
-    G_P = G.mean(axis=4)  # shape (F, ny, nu, M)
-    if P > 1:
-        sqr_error = np.abs(G - G_P[..., None]) ** 2  # shape (F, ny, nu, M, P)
-        tot_sqr_error = sqr_error.sum(axis=(3, 4))  # shape (F, ny, nu)
-        var_noise = tot_sqr_error / (M * (P - 1))  # shape (F, ny, nu)
-        var_noise = jnp.asarray(var_noise)
-    else:
-        var_noise = None
-
-    # Compute total variance
-    G_bla = G_P.mean(axis=3)  # shape (F, ny, nu)
-    if M > 1:
-        sqr_error = np.abs(G_P - G_bla[..., None]) ** 2  # shape (F, ny, nu, M)
-        tot_sqr_error = sqr_error.sum(axis=3)  # shape (F, ny, nu)
-        var_tot = tot_sqr_error / (M - 1)  # shape (F, ny, nu)
-        var_tot = jnp.asarray(var_tot)
-    else:
-        var_tot = None
-
-    G_bla = jnp.asarray(G_bla)
-
-    return NonparametricBLA(G_bla, var_noise, var_tot)
 
 
 def subspace_id(
@@ -264,107 +215,7 @@ def optimize(
     return model
 
 
-def _optimize_stable(
-    model: ModelBLA,
-    data: InputOutputData,
-    input_output_mode: bool,
-    freq_weighting: bool,
-    logging_enabled: bool,
-    solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser,
-    max_iter: int,
-    print_every: int,
-    device: DeviceLike,
-    stability_margin: float,
-) -> tuple[ModelBLA, SolveResult]:
-    """Optimize a BLA with a contractive state-transition parameterization."""
-    theta0 = _stable_parameters_from_model(
-        model, stability_margin
-    )
-
-    if input_output_mode:
-        args = (
-            model.ts,
-            jnp.asarray(data.freq.U)[data.freq.f_idx],
-            jnp.asarray(data.freq.Y)[data.freq.f_idx],
-            data.freq.f[data.freq.f_idx],
-            stability_margin,
-        )
-        loss_fn = _loss_stable_output_spectrum
-    else:
-        G_bla = data.freq.G_bla
-        W = 1 / G_bla.var_tot if freq_weighting else jnp.ones_like(G_bla.G)
-        args = (
-            model.ts,
-            jnp.asarray(G_bla.G),
-            data.freq.f[data.freq.f_idx],
-            W,
-            stability_margin,
-        )
-        loss_fn = _loss_stable_frequency_response
-
-    if logging_enabled:
-        print("Starting iterative optimization...")
-    solve_result = solve(
-        theta0, solver, args, loss_fn, max_iter, print_every, device
-    )
-
-    model = _stable_model_from_parameters(
-        solve_result.theta, model.ts, stability_margin, norm=None
-    )
-    model = _normalize_states(model, data)
-
-    return model, solve_result
-
-
 ### Internal helpers ###
-
-
-def _compute_frequency_response(U: np.ndarray, Y: np.ndarray) -> np.ndarray:
-    """Compute frequency response matrix G(k) = Y(k) * (U(k))^(-1).
-
-    Parameters
-    ----------
-    U : np.ndarray, shape (F, nu, R, P)
-        DFT input spectra at the excited frequencies across realizations and periods.
-    Y : np.ndarray, shape (F, ny, R, P)
-        DFT output spectra at the excited frequencies across realizations and periods.
-
-    Returns
-    -------
-    G : np.ndarray, shape (F, ny, nu, M, P)
-        Frequency Response Matrix:
-        - F: number of frequency bins;
-        - ny: number of outputs;
-        - nu: number of inputs;
-        - M: number of experiments (R // nu);
-        - P: number of periods.
-
-    """
-    F, nu, R, P = U.shape
-    ny = Y.shape[1]
-
-    M = R // nu
-    if M * nu != R:
-        print(
-            "Warning: Suboptimal number of realizations. Not all realizations "
-            "are used to compute the frequency response matrix. Ideally, "
-            "the number of realizations (R) should be an integer multiple "
-            "of the number of inputs (nu)."
-        )
-
-    G = np.zeros((F, ny, nu, M, P), dtype=complex)
-
-    for kf in range(F):
-        for kr in range(M):
-            for kp in range(P):
-                start_idx = kr * nu
-                end_idx = (kr + 1) * nu
-                U_block = U[kf, :, start_idx:end_idx, kp]
-                Y_block = Y[kf, :, start_idx:end_idx, kp]
-
-                G[kf, :, :, kr, kp] = _misc.right_solve(Y_block, U_block)
-
-    return G
 
 
 def _subspace_id(
@@ -373,29 +224,33 @@ def _subspace_id(
     nq: int,
     freq_weighting: bool,
     input_output_mode: bool
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[ComplexArray, ComplexArray, ComplexArray, ComplexArray]:
     """Perform actual subspace identification with validated inputs."""
-    freqs = freq_data.f[freq_data.f_idx]
+    freqs = freq_data.freqs[freq_data.excited_bins]
     fs = freq_data.fs
     z = 2 * np.pi * freqs / fs
     
     if input_output_mode:
-        F = len(freqs)
-        _, ny, R = freq_data.Y.shape
+        n_bins = len(freqs)
+        _, ny, n_realizations = freq_data.Y.shape
         nu = freq_data.U.shape[1]
         
-        Y = np.transpose(freq_data.Y[freq_data.f_idx], (0, 2, 1)).reshape(R * F, ny)
-        U = np.transpose(freq_data.U[freq_data.f_idx], (0, 2, 1)).reshape(R * F, nu) 
-        zj = np.repeat(np.exp(z * 1j), R)
+        Y = np.transpose(freq_data.Y[freq_data.excited_bins], (0, 2, 1)).reshape(
+            n_realizations * n_bins, ny
+        )
+        U = np.transpose(freq_data.U[freq_data.excited_bins], (0, 2, 1)).reshape(
+            n_realizations * n_bins, nu
+        )
+        zj = np.repeat(np.exp(z * 1j), n_realizations)
         W = np.empty(0)  # no weighting in input-output mode
         
     else:
         G_bla = freq_data.G_bla
-        F, ny, nu = G_bla.G.shape
+        n_bins, ny, nu = G_bla.G.shape
 
         # Convert BLA to "input-output form" for FSID algorithm compatibility
-        Y = np.transpose(G_bla.G, (0, 2, 1)).reshape(nu * F, ny)
-        U = np.tile(np.eye(nu), (F, 1))
+        Y = np.transpose(G_bla.G, (0, 2, 1)).reshape(nu * n_bins, ny)
+        U = np.tile(np.eye(nu), (n_bins, 1))
         zj = np.repeat(np.exp(z * 1j), nu)
 
         # Create weighting matrix (inverse of total variance)
@@ -403,9 +258,9 @@ def _subspace_id(
             W_temp = 1 / G_bla.var_tot
 
             # The four lines below are to ensure compatibility with fsid.gfdsid
-            W_temp = np.transpose(np.sqrt(W_temp), (0, 2, 1)).reshape(nu * F, ny)
-            W = np.zeros((nu * F, ny, ny))
-            for k in range(nu * F):
+            W_temp = np.transpose(np.sqrt(W_temp), (0, 2, 1)).reshape(nu * n_bins, ny)
+            W = np.zeros((nu * n_bins, ny, ny))
+            for k in range(nu * n_bins):
                 np.fill_diagonal(W[k], W_temp[k])
         else:
             W = np.empty(0)
@@ -433,13 +288,13 @@ def _optimize(
     device: DeviceLike,
 ) -> tuple[ModelBLA, SolveResult]:
     """Perform actual optimization with validated inputs."""
-    freqs = data.freq.f[data.freq.f_idx]
+    freqs = data.freq.freqs[data.freq.excited_bins]
     model = _normalize_states(model, data)
     theta0, theta_static = eqx.partition(model, eqx.is_inexact_array)
 
     if input_output_mode:
-        U_nonpar = jnp.asarray(data.freq.U)[data.freq.f_idx]
-        Y_nonpar = jnp.asarray(data.freq.Y)[data.freq.f_idx]
+        U_nonpar = jnp.asarray(data.freq.U)[data.freq.excited_bins]
+        Y_nonpar = jnp.asarray(data.freq.Y)[data.freq.excited_bins]
         args = (theta_static, U_nonpar, Y_nonpar, freqs)
         loss_fn = _loss_output_spectrum
    
@@ -462,6 +317,58 @@ def _optimize(
 
     model = eqx.combine(solve_result.theta, theta_static)
     model = _normalize_states(model, data)
+    return model, solve_result
+
+
+def _optimize_stable(
+    model: ModelBLA,
+    data: InputOutputData,
+    input_output_mode: bool,
+    freq_weighting: bool,
+    logging_enabled: bool,
+    solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser,
+    max_iter: int,
+    print_every: int,
+    device: DeviceLike,
+    stability_margin: float,
+) -> tuple[ModelBLA, SolveResult]:
+    """Optimize a BLA with a contractive state-transition parameterization."""
+    theta0 = _stable_parameters_from_model(
+        model, stability_margin
+    )
+
+    if input_output_mode:
+        args = (
+            model.ts,
+            jnp.asarray(data.freq.U)[data.freq.excited_bins],
+            jnp.asarray(data.freq.Y)[data.freq.excited_bins],
+            data.freq.freqs[data.freq.excited_bins],
+            stability_margin,
+        )
+        loss_fn = _loss_stable_output_spectrum
+    else:
+        G_bla = data.freq.G_bla
+        W = 1 / G_bla.var_tot if freq_weighting else jnp.ones_like(G_bla.G)
+        args = (
+            model.ts,
+            jnp.asarray(G_bla.G),
+            data.freq.freqs[data.freq.excited_bins],
+            W,
+            stability_margin,
+        )
+        loss_fn = _loss_stable_frequency_response
+
+    if logging_enabled:
+        print("Starting iterative optimization...")
+    solve_result = solve(
+        theta0, solver, args, loss_fn, max_iter, print_every, device
+    )
+
+    model = _stable_model_from_parameters(
+        solve_result.theta, model.ts, stability_margin, norm=None
+    )
+    model = _normalize_states(model, data)
+
     return model, solve_result
 
 
@@ -523,11 +430,11 @@ def _stable_model_from_parameters(
 
 
 def _stable_A_from_parameters(
-    theta_L: jnp.ndarray,
-    theta_W: jnp.ndarray,
+    theta_L: Float[Array, "n_lower_triangle_entries"],
+    theta_W: Float[Array, "n_upper_triangle_entries"],
     nx: int,
     stability_margin: float,
-) -> jnp.ndarray:
+) -> Float[Array, "nx nx"]:
     """Map unconstrained variables to an A with norm below a fixed bound."""
     lower_rows, lower_cols = np.tril_indices(nx)
     diagonal = lower_rows == lower_cols
@@ -602,7 +509,7 @@ def _stable_parameters_from_model(
     )
 
 
-def _inverse_softplus(x: np.ndarray) -> np.ndarray:
+def _inverse_softplus(x: RealArray) -> RealArray:
     """Numerically stable inverse of softplus for strictly positive inputs."""
     return np.where(x > 20, x, np.log(np.expm1(x)))
 
@@ -614,7 +521,7 @@ def _validate_stability_margin(stability_margin: float) -> None:
         raise ValueError(msg)
 
 
-def _validate_real_finite_model(*matrices: np.ndarray) -> None:
+def _validate_real_finite_model(*matrices: RealArray) -> None:
     """Reject models that cannot be used by the real-valued parameterization."""
     if any(np.iscomplexobj(matrix) for matrix in matrices):
         msg = "Stability-enforced optimization requires a real-valued model."
@@ -627,15 +534,15 @@ def _validate_real_finite_model(*matrices: np.ndarray) -> None:
 def _normalize_states(model: ModelBLA, data: InputOutputData) -> ModelBLA:
     """Normalize BLA model states to have unit variance."""
     nx, nu = model.B_u.shape
-    N = data.time.u.shape[0]
+    n_samples = data.time.u.shape[0]
 
     G_xu = ModelBLA(  # parametric u->x frequency response; not the true BLA
         A=model.A, B_u=model.B_u, C_y=np.eye(nx), D_yu=np.zeros((nx, nu)), 
         ts=model.ts, norm=model.norm,
-    )._frequency_response(data.freq.f)  # shape (N//2 + 1, nx, nu)
+    )._frequency_response(data.freq.freqs)  # shape (n_samples // 2 + 1, nx, nu)
 
-    X = G_xu @ data.freq.U  # shape (N//2 + 1, nx, R)
-    x = np.fft.irfft(X, n=N, axis=0)  # shape (N, nx, R)
+    X = G_xu @ data.freq.U  # shape (n_samples // 2 + 1, nx, n_realizations)
+    x = np.fft.irfft(X, n=n_samples, axis=0)  # shape (n_samples, nx, n_realizations)
     x_std = np.std(x, axis=(0, 2))
 
     Tx = np.diag(x_std)

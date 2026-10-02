@@ -23,10 +23,10 @@ Additional components:
     This is useful for quickly loading a low-dimensional benchmark dataset in the
     required format.
 """
-from . import _best_linear_approximation as lin
-from . import _nonlin_lfr as nonlin
-from . import static
-from ._data_manager import (
+from freq_statespace import _best_linear_approximation as lin
+from freq_statespace import _nonlin_lfr as nonlin
+from freq_statespace import static
+from freq_statespace._data_manager import (
     FrequencyData,
     InputOutputData,
     NonparametricBLA,
@@ -34,10 +34,10 @@ from ._data_manager import (
     TimeData,
     create_data_object,
 )
-from ._misc import load_and_preprocess_silverbox_data
-from ._model_structures import ModelBLA, ModelNonlinearLFR
-from ._serialize import save_model, load_model
-from ._solve import SolveResult
+from freq_statespace._misc import load_and_preprocess_silverbox_data
+from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
+from freq_statespace._serialize import save_model, load_model
+from freq_statespace._solve import SolveResult
 
 
 __all__ = [

@@ -7,7 +7,7 @@ A flexible [JAX](https://docs.jax.dev/en/latest/index.html)-based package for no
 
 ### Basic usage
 
-The package works with (multiple periods and realizations of) input–output data sequences $u(n)$ and $y(n)$ for $n = 0, \ldots, N-1$, assuming periodic excitation and an integer number of steady-state output periods. The specific NL-LFR structure is defined as:
+The package works with (multiple periods and realizations of) input–output data sequences $u(n)$ and $y(n)$ for $n = 0, \ldots, n_{\mathrm{samples}}-1$, assuming periodic excitation and an integer number of steady-state output periods. The specific NL-LFR structure is defined as:
 ```math
   \begin{align*}
     x(n+1) &= A x(n) + B_u u(n) + B_w w(n),\\

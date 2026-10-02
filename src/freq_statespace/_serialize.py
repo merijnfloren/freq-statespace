@@ -12,7 +12,7 @@ import equinox as eqx
 
 
 if TYPE_CHECKING:
-    from ._model_structures import ModelBLA, ModelNonlinearLFR
+    from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
 
 
 T = TypeVar("T", bound="Serializable")

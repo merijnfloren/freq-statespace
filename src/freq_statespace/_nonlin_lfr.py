@@ -1,17 +1,24 @@
 """NL-LFR inference and learning, optimization, and instantiation."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
 
-from . import _misc
-from ._config import PRINT_EVERY, SEED, SOLVER, DeviceLike
-from ._data_manager import FrequencyData, InputOutputData
-from ._model_structures import ModelBLA, ModelNonlinearLFR
-from ._solve import SolveResult, solve
-from .static._feature_maps import AbstractFeatureMap
-from .static._nonlin_funcs import AbstractNonlinearFunction, BasisFunctionModel
+from freq_statespace import _misc
+from freq_statespace._config import PRINT_EVERY, SEED, SOLVER, DeviceLike
+from freq_statespace._data_manager import FrequencyData, InputOutputData
+from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
+from freq_statespace._solve import SolveResult, solve
+from freq_statespace.static._feature_maps import AbstractFeatureMap
+from freq_statespace.static._nonlin_funcs import AbstractNonlinearFunction, BasisFunctionModel
+
+if TYPE_CHECKING:
+    from jaxtyping import Array, Complex, Float
 
 
 # When changing these constants, also update the corresponding docstrings!
@@ -26,10 +33,10 @@ SIGMA = 1e-4
 class DecVarsInferenceLearning(eqx.Module):
     """Decision variables for inference and learning."""
 
-    B_w_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
-    C_z_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
-    D_yw_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
-    D_zu_star: jnp.ndarray = eqx.field(converter=jnp.asarray)
+    B_w_star: Float[Array, "nx nw"] = eqx.field(converter=jnp.asarray)
+    C_z_star: Float[Array, "nz nx"] = eqx.field(converter=jnp.asarray)
+    D_yw_star: Float[Array, "ny nw"] = eqx.field(converter=jnp.asarray)
+    D_zu_star: Float[Array, "nz nu"] = eqx.field(converter=jnp.asarray)
     
         
 class ArgsInferenceLearning(eqx.Module):
@@ -39,11 +46,11 @@ class ArgsInferenceLearning(eqx.Module):
     phi: AbstractFeatureMap
     lambda_w: float
     fixed_point_iters: int
-    freq_data: tuple  # (frequencies, sampling frequency, U, Y, G_yu)
-    Lambda: jnp.ndarray  # shape (N//2 + 1, ny, ny)
-    Tz_inv: jnp.ndarray  # shape (nz, nz)
+    freq_data: tuple  # (frequencies, fs, U, Y, G_yu)
+    Lambda: Float[Array, "n_bins ny ny"]
+    Tz_inv: Float[Array, "nz nz"]
     epsilon: float
-    N: int
+    n_samples: int
     recompute_fixed_point: bool
 
 
@@ -51,10 +58,10 @@ class ArgsNonlinearOptimization(eqx.Module):
     """Static arguments for nonlinear LFR optimization."""
     
     theta_static: ModelNonlinearLFR
-    u: jnp.ndarray  # shape (N, nu, R)
-    Y: jnp.ndarray  # shape (N//2 + 1, ny, R)
-    Lambda: jnp.ndarray  # shape (N//2 + 1, ny, ny)
-    x0: jnp.ndarray  # shape (nx, R)
+    u: Float[Array, "n_samples nu n_realizations"]
+    Y: Complex[Array, "n_bins ny n_realizations"]
+    Lambda: Float[Array, "n_bins ny ny"]
+    x0: Float[Array, "nx n_realizations"]
     offset: int
 
 
@@ -357,24 +364,24 @@ def connect(
 
 
 def _loss_output_spectrum(
-    Y: jnp.ndarray,
-    Y_hat: jnp.ndarray,
-    Lambda: jnp.ndarray
-) -> jnp.ndarray:
+    Y: Complex[Array, "n_bins ny n_realizations"],
+    Y_hat: Complex[Array, "n_bins ny n_realizations"],
+    Lambda: Float[Array, "n_bins ny ny"],
+) -> Float[Array, "n_bins ny n_realizations"]:
     """Compute the weighted loss between the measured and simulated output spectra.
 
     Parameters
     ----------
-    Y : jnp.ndarray, shape (N//2 + 1, ny, R)
+    Y : Complex[Array, "n_bins ny n_realizations"]
         Measured output spectrum, averaged over periods.
-    Y_hat : jnp.ndarray, shape (N//2 + 1, ny, R)
+    Y_hat : Complex[Array, "n_bins ny n_realizations"]
         Simulated output spectrum.
-    Lambda : jnp.ndarray, shape (N//2 + 1, ny, ny)
+    Lambda : Float[Array, "n_bins ny ny"]
         Weight matrix.
 
     """
-    F_tot, _, R = Y.shape
-    return jnp.sqrt(Lambda / (F_tot * R)) @ (Y - Y_hat)
+    n_bins, _, n_realizations = Y.shape
+    return jnp.sqrt(Lambda / (n_bins * n_realizations)) @ (Y - Y_hat)
 
 
 def _prepare_inference_and_learning(
@@ -392,9 +399,9 @@ def _prepare_inference_and_learning(
     """Prepare initial guess and function arguments for inference and learning."""
     nz = phi.nz
     ny, nx = bla.C_y.shape
-    N, nu = data.time.u.shape[:2]
+    n_samples, nu = data.time.u.shape[:2]
 
-    freqs = data.freq.f
+    freqs = data.freq.freqs
     U = data.freq.U
     Y = data.freq.Y
 
@@ -432,7 +439,7 @@ def _prepare_inference_and_learning(
         Lambda=_compute_weighting_matrix(data.freq, freq_weighting),
         Tz_inv=Tz_inv,
         epsilon=epsilon,
-        N=N,
+        n_samples=n_samples,
         recompute_fixed_point=recompute_fixed_point,
     )
     return theta_wz, args
@@ -456,7 +463,7 @@ def _loss_inference_and_learning(
 
     nw = D_yw.shape[1]
     nz, nx = C_z.shape
-    F_tot, nu, R = U.shape
+    n_bins, nu, n_realizations = U.shape
 
     Theta = jnp.vstack((B_w, D_yw)).T @ jnp.vstack((B_w, D_yw))
     Theta += args.epsilon / args.lambda_w * jnp.eye(nw)
@@ -474,7 +481,7 @@ def _loss_inference_and_learning(
             C_z @ G_x[:, nu:],  # G_zw
         )
 
-    G_yw, G_zu, G_zw = jax.vmap(_compute_parametric_Gs)(jnp.arange(F_tot))
+    G_yw, G_zu, G_zw = jax.vmap(_compute_parametric_Gs)(jnp.arange(n_bins))
 
     # 1) Nonparametric inference
     def _infer_nonparametric_signals(k):
@@ -484,14 +491,14 @@ def _loss_inference_and_learning(
         Z_hat = G_zu[k, ...] @ U[k, ...] + G_zw[k, ...] @ W_hat
         return W_hat, Z_hat
 
-    W_star, Z_star = jax.vmap(_infer_nonparametric_signals)(jnp.arange(F_tot))
+    W_star, Z_star = jax.vmap(_infer_nonparametric_signals)(jnp.arange(n_bins))
 
     # 2) Parametric learning
-    w_star = jnp.fft.irfft(W_star, n=args.N, axis=0)
-    z_star = jnp.fft.irfft(Z_star, n=args.N, axis=0)
+    w_star = jnp.fft.irfft(W_star, n=args.n_samples, axis=0)
+    z_star = jnp.fft.irfft(Z_star, n=args.n_samples, axis=0)
 
-    w_star_stacked = jnp.transpose(w_star, (2, 0, 1)).reshape(args.N * R, nw)
-    z_star_stacked = jnp.transpose(z_star, (2, 0, 1)).reshape(args.N * R, nz)
+    w_star_stacked = jnp.transpose(w_star, (2, 0, 1)).reshape(args.n_samples * n_realizations, nw)
+    z_star_stacked = jnp.transpose(z_star, (2, 0, 1)).reshape(args.n_samples * n_realizations, nz)
 
     # 2a) Compute beta
     phi_z_star = args.phi._compute_features(z_star_stacked)
@@ -500,11 +507,11 @@ def _loss_inference_and_learning(
     # 2b) Perform fixed-point iterations
     def _fixed_point_iteration(_, phi_z):
         w_stacked = phi_z @ beta_hat
-        w = jnp.transpose(w_stacked.reshape(R, args.N, nw), (1, 2, 0))
+        w = jnp.transpose(w_stacked.reshape(n_realizations, args.n_samples, nw), (1, 2, 0))
         W = jnp.fft.rfft(w, axis=0)
         Z = G_zu @ U + G_zw @ W
-        z = jnp.fft.irfft(Z, n=args.N, axis=0)
-        z_stacked = jnp.transpose(z, (2, 0, 1)).reshape(args.N * R, nz)
+        z = jnp.fft.irfft(Z, n=args.n_samples, axis=0)
+        z_stacked = jnp.transpose(z, (2, 0, 1)).reshape(args.n_samples * n_realizations, nz)
         return args.phi._compute_features(z_stacked)
     
     fixed_point_fn = (
@@ -522,7 +529,7 @@ def _loss_inference_and_learning(
     )
 
     w_hat_stacked = phi_z @ beta_hat
-    w_hat = jnp.transpose(w_hat_stacked.reshape(R, args.N, nw), (1, 2, 0))
+    w_hat = jnp.transpose(w_hat_stacked.reshape(n_realizations, args.n_samples, nw), (1, 2, 0))
     W_beta = jnp.fft.rfft(w_hat, axis=0)
 
     # 2c) Compute loss
@@ -580,7 +587,7 @@ def _loss_nonlin_optimization(
     
 def _validate_weighting(
     freq_weighting: bool,
-    var_noise: jnp.ndarray | None,
+    var_noise: Float[Array, "n_bins ny"] | None,
     print_warning: bool
 ) -> bool:
     """Check if weighting can be applied based on output noise variance availability."""
@@ -598,7 +605,7 @@ def _validate_weighting(
 def _compute_weighting_matrix(
     freq_data: FrequencyData,
     freq_weighting: bool
-) -> jnp.ndarray:
+) -> Float[Array, "n_bins ny ny"]:
     """Compute weighting matrix containing the inverse output noise variances."""
     F_tot, ny = freq_data.Y.shape[:2]
     
@@ -619,7 +626,7 @@ def _loss_bla(bla: ModelBLA, freq_data: FrequencyData, freq_weighting: bool) -> 
     Y = freq_data.Y
     U = freq_data.U
 
-    Y_hat = bla._frequency_response(freq_data.f) @ U
+    Y_hat = bla._frequency_response(freq_data.freqs) @ U
     loss = _loss_output_spectrum(Y, Y_hat, Lambda)
     return _misc.scalar_valued(loss)
 
@@ -627,7 +634,7 @@ def _loss_bla(bla: ModelBLA, freq_data: FrequencyData, freq_weighting: bool) -> 
 def _create_basis_function_model_given_beta(
     nw: int,
     phi: AbstractFeatureMap,
-    beta: jnp.ndarray
+    beta: Float[Array, "n_features nw"]
 ) -> BasisFunctionModel:
     """Create a `BasisFunctionModel` instance given `beta`.
 
@@ -643,6 +650,3 @@ def _create_basis_function_model_given_beta(
         pytree=BasisFunctionModel(nw, phi, dummy_seed),
         replace=beta,
     )
-
-
-

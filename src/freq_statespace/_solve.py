@@ -5,7 +5,7 @@ import contextlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import equinox as eqx
 import jax
@@ -15,7 +15,10 @@ from jaxtyping import PyTree
 from optimistix._least_squares import _ToMinimiseFn
 from optimistix._misc import OutAsArray
 
-from ._config import DeviceLike
+from freq_statespace._config import DeviceLike
+
+if TYPE_CHECKING:
+    from freq_statespace._typing import RealArray
 
 
 @dataclass(frozen=True)
@@ -24,9 +27,9 @@ class SolveResult:
     
     theta: PyTree
     aux: Any  # problem-dependent auxiliary output
-    loss_history: np.ndarray
+    loss_history: RealArray
     iter_count: int
-    iter_times: np.ndarray
+    iter_times: RealArray
     converged: bool
     wall_time: float
 

@@ -1,11 +1,46 @@
 """Data structures in time and frequency domains, including metadata."""
+from __future__ import annotations
+
+import warnings
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
-from . import _best_linear_approximation
+from best_linear_approximation._exceptions import (
+    InsufficientExperimentsError,
+    NoiseCovarianceUnavailableWarning,
+    TotalCovarianceUnavailableWarning,
+)
+from best_linear_approximation.robust import noisy_input
+from best_linear_approximation._signal_validation import (
+    MatchingAxes,
+    SignalContract,
+    SignalRanks,
+    _validate_matching_axes,
+)
+from best_linear_approximation._spectra import compute_noise_covariance
+from best_linear_approximation._spectral_validation import (
+    resolve_excited_bins,
+    validate_sampling_frequency,
+)
+from best_linear_approximation._uncertainty import Uncertainty
+
+from freq_statespace._config import DEFAULT_RELATIVE_THRESHOLD_EXCITED_BINS
+
+if TYPE_CHECKING:
+    from jaxtyping import Array, Complex, Float
+    from numpy.typing import NDArray
+
+    from freq_statespace._typing import ComplexArray, RealArray
+
+
+SIGNAL_CONTRACT = SignalContract(
+    ranks=SignalRanks(r=None, u=4, y=4),
+    matching_axes=(MatchingAxes(signals=("u", "y"), axes=(0, 2, 3)),),
+)
 
 
 @dataclass(frozen=True)
@@ -14,20 +49,20 @@ class TimeData:
 
     Attributes
     ----------
-    u : jnp.ndarray, shape (N, nu, R)
+    u : Float[Array, "n_samples nu n_realizations"]
         Normalized input signals, averaged over periods.
-    y : jnp.ndarray, shape (N, ny, R)
+    y : Float[Array, "n_samples ny n_realizations"]
         Normalized output signals, averaged over periods.
-    t : np.ndarray, shape (N,)
+    t : RealArray, shape (n_samples,)
         Time vector of a single period.
     ts : float
         Sampling time in seconds.
 
     """
 
-    u: jnp.ndarray
-    y: jnp.ndarray
-    t: np.ndarray
+    u: Float[Array, "n_samples nu n_realizations"]
+    y: Float[Array, "n_samples ny n_realizations"]
+    t: RealArray
     ts: float
 
 
@@ -37,19 +72,18 @@ class NonparametricBLA:
 
     Attributes
     ----------
-    G : np.ndarray
-        Nonparametric BLA estimate, shape (F, ny, nu).
-    var_noise : np.ndarray, shape (F, ny, nu), optional
-        Estimated noise variance per period. Is `None` if `P == 1`.
-    var_tot : np.ndarray, shape (F, ny, nu), optional
-        Estimated total variance per experiment (`R // nu`). Is `None`
-        if `R // nu == 1`.
+    G : ComplexArray
+        Nonparametric BLA estimate, shape (n_excited_bins, ny, nu).
+    var_noise : RealArray, shape (n_excited_bins, ny, nu), optional
+        Measurement-noise variance of the nonparametric BLA estimate.
+    var_tot : RealArray, shape (n_excited_bins, ny, nu), optional
+        Total variance of the nonparametric BLA estimate.
 
     """
 
-    G: np.ndarray
-    var_noise: np.ndarray | None
-    var_tot: np.ndarray | None
+    G: ComplexArray
+    var_noise: RealArray | None
+    var_tot: RealArray | None
 
 
 @dataclass(frozen=True)
@@ -61,16 +95,16 @@ class FrequencyData:
     G_bla : `NonparametricBLA`, optional
         Nonparametric BLA estimate with variance estimates. Is `None` if
         insufficient realizations are available to compute the frequency
-        response matrix (i.e., `R < nu`).
-    U : jnp.ndarray, shape (N//2 + 1, nu, R)
+        response matrix (i.e., `n_realizations < nu`).
+    U : Complex[Array, "n_bins nu n_realizations"]
         Normalized input DFT, averaged over periods.
-    Y : jnp.ndarray, shape (N//2 + 1, ny, R)
+    Y : Complex[Array, "n_bins ny n_realizations"]
         Normalized output DFT, averaged over periods.
-    Y_var_noise : jnp.ndarray, shape (F, ny), optional
-        Estimated output noise variance per period. Is `None` if `P == 1`.
-    f : np.ndarray, shape (N//2 + 1,)
+    Y_var_noise : Float[Array, "n_bins ny"], optional
+        Estimated output measurement-noise variance. Is `None` when unavailable.
+    freqs : RealArray, shape (n_samples // 2 + 1,)
         Complete frequency vector.
-    f_idx : np.ndarray, shape (F,)
+    excited_bins : NDArray[np.int_], shape (n_bins,)
         Excited frequency indices.
     fs : float
         Sampling frequency in Hz.
@@ -78,11 +112,11 @@ class FrequencyData:
     """
 
     G_bla: NonparametricBLA | None
-    U: jnp.ndarray
-    Y: jnp.ndarray
-    Y_var_noise: jnp.ndarray | None
-    f: np.ndarray
-    f_idx: np.ndarray
+    U: Complex[Array, "n_bins nu n_realizations"]
+    Y: Complex[Array, "n_bins ny n_realizations"]
+    Y_var_noise: Float[Array, "n_bins ny"] | None
+    freqs: RealArray
+    excited_bins: NDArray[np.int_]
     fs: float
 
 
@@ -91,21 +125,21 @@ class Normalizer(eqx.Module):
 
     Attributes
     ----------
-    u_mean : np.ndarray, shape (nu,)
+    u_mean : RealArray, shape (nu,)
         Input means.
-    u_std : np.ndarray, shape (nu,)
+    u_std : RealArray, shape (nu,)
         Input standard deviations.
-    y_mean : np.ndarray, shape (ny,)
+    y_mean : RealArray, shape (ny,)
         Output means.
-    y_std : np.ndarray, shape (ny,)
+    y_std : RealArray, shape (ny,)
         Output standard deviations.
 
     """
 
-    u_mean: np.ndarray = eqx.field(converter=np.asarray)
-    u_std: np.ndarray = eqx.field(converter=np.asarray)
-    y_mean: np.ndarray = eqx.field(converter=np.asarray)
-    y_std: np.ndarray = eqx.field(converter=np.asarray)
+    u_mean: RealArray = eqx.field(converter=np.asarray)
+    u_std: RealArray = eqx.field(converter=np.asarray)
+    y_mean: RealArray = eqx.field(converter=np.asarray)
+    y_std: RealArray = eqx.field(converter=np.asarray)
 
 
 @dataclass(frozen=True)
@@ -126,32 +160,38 @@ class InputOutputData:
 
 
 def create_data_object(
-    u: np.ndarray,
-    y: np.ndarray,
-    f_idx: np.ndarray,
-    fs: float
+    u: RealArray,
+    y: RealArray,
+    fs: float,
+    excited_bins: NDArray[np.int_] | float = DEFAULT_RELATIVE_THRESHOLD_EXCITED_BINS,
 ) -> InputOutputData:
     """Create InputOutputData object from time-domain signals and frequency metadata.
 
     Parameters
     ----------
-    u : np.ndarray, shape (N, nu, R, P)
-        Input time series, a (random-phase) (multi)sine with 4 dimensions:
-        - N: Number of samples per period;
-        - nu: Number of input channels;
-        - R: Number of independent phase realizations. Each realization must
-             have the same frequency content and amplitude characteristics;
-        - P: Number of periods (copies of the same realization).
+    u : RealArray
+        Input time series, a (random-phase) (multi)sine with shape
+        ``(n_samples, nu, n_realizations, n_periods)``, where:
+        - ``n_samples``: number of samples per period;
+        - ``nu``: number of input channels;
+        - ``n_realizations``: number of independent phase realizations. Each
+            realization must have the same frequency content and amplitude
+            characteristics;
+        - ``n_periods``: number of periods (copies of the same realization).
         It is fine if only a single realization and/or period is provided,
         but is is important to shape the data in the required 4D format.
-    y : np.ndarray, shape (N, ny, R, P)
-        Output time series. Similar structure as `u`, with ny as the number of
-        output channels. All periods must be in steady-state,
-        i.e., there should be almost no transient effects.
-    f_idx : np.ndarray, shape (F,)
-        Indices of excited frequencies, where `F ≤ N//2 + 1`.
+    y : RealArray
+        Steady-state output time series with shape
+        ``(n_samples, ny, n_realizations, n_periods)``,  where ``ny`` is the
+        number of output channels.
     fs : float
         Sampling frequency in Hz.
+    excited_bins : NDArray[np.int_] or float, optional
+        If provided as an array, specifies strictly increasing indices of the
+        excited non-DC, non-Nyquist ``rfft`` bins. Otherwise, if provided as a
+        float in ``(0, 1)``, selects them automatically from ``u`` using the
+        mean spectral magnitude across normalized input channels. Bins exceeding
+        this fraction of the maximum magnitude are selected.
 
     Returns
     -------
@@ -159,67 +199,33 @@ def create_data_object(
         Processed (meta)data in time and frequency domains.
 
     """
-    u, y, f_idx = np.asarray(u), np.asarray(y), np.asarray(f_idx)
-
-    # Validate dimensions
-    if u.ndim != 4:
-        msg = "`u` must have 4 dimensions: (N, nu, R, P)."
-        raise ValueError(msg)
-    if y.ndim != 4:
-        msg = "`y` must have 4 dimensions: (N, ny, R, P)."
-        raise ValueError(msg)
-    if u.shape[0] != y.shape[0]:
-        msg = "`u` and `y` must have same number of time samples."
-        raise ValueError(msg)
-    if u.shape[2] != y.shape[2]:
-        msg = "`u` and `y` must have same number of realizations."
-        raise ValueError(msg)
-    if u.shape[3] != y.shape[3]:
-        msg = "`u` and `y` must have same number of periods."
-        raise ValueError(msg)
+    u, y, fs, excited_bins = _validate_input_arguments(u, y, fs, excited_bins)
 
     ts = 1 / fs
-    N, nu, R, P = u.shape
-    t = np.arange(N) * ts
+    n_samples = u.shape[0]
+    t = np.arange(n_samples) * ts
 
     # Normalize data (zero mean, unit variance)
-    u_mean = u.mean(axis=(0, 2, 3), keepdims=True)
-    y_mean = y.mean(axis=(0, 2, 3), keepdims=True)
-    u_std = u.std(axis=(0, 2, 3), keepdims=True)
-    y_std = y.std(axis=(0, 2, 3), keepdims=True)
+    u_mean = np.mean(u, axis=(0, 2, 3), keepdims=True)
+    y_mean = np.mean(y, axis=(0, 2, 3), keepdims=True)
+    u_std = np.std(u, axis=(0, 2, 3), keepdims=True)
+    y_std = np.std(y, axis=(0, 2, 3), keepdims=True)
 
     u = (u - u_mean) / u_std
     y = (y - y_mean) / y_std
 
+    G_bla = _create_nonparametric_bla(u, y, fs, excited_bins)
+
     # Compute DFTs
     U = np.fft.rfft(u, axis=0)
     Y = np.fft.rfft(y, axis=0)
-    f = np.arange(N//2 + 1) * fs / N
+    freqs = np.arange(n_samples // 2 + 1) * fs / n_samples
+    Y_avg = np.mean(Y, axis=3)
+    Y_var_noise = _compute_output_noise_variance(Y)
 
-    # Compute output noise variance (will be used in loss functions)
-    Y_avg = Y.mean(axis=3)
-    if P > 1:
-        sqr_error = np.abs(Y - Y_avg[..., None])**2  # shape (F, ny, R, P)
-        tot_sqr_error = sqr_error.sum(axis=(2, 3))  # shape (F, ny)
-        Y_var_noise = tot_sqr_error / (R * (P - 1))  # shape (F, ny)
-        Y_var_noise = jnp.asarray(Y_var_noise)
-    else:
-        Y_var_noise = None
-
-    # Compute nonparametric BLA
-    if R >= nu:
-        G_bla = _best_linear_approximation.nonparametric_bla(U[f_idx], Y[f_idx])
-    else:
-        print(
-            "Warning: Insufficient realizations (R < nu) to compute the nonparametric "
-            "BLA. Identification can proceed, but the initial linear model may be "
-            "suboptimal."
-        )
-        G_bla = None
-        
     # We proceed with data that is averaged over periods
-    u_avg, y_avg = u.mean(axis=3), y.mean(axis=3)
-    U_avg = U.mean(axis=3)
+    u_avg, y_avg = np.mean(u, axis=3), np.mean(y, axis=3)
+    U_avg = np.mean(U, axis=3)
 
     # Finally, we convert the input-output data to JAX arrays
     u_avg, y_avg = jnp.asarray(u_avg), jnp.asarray(y_avg)
@@ -227,7 +233,72 @@ def create_data_object(
 
     return InputOutputData(
         TimeData(u_avg, y_avg, t, ts),
-        FrequencyData(G_bla, U_avg, Y_avg, Y_var_noise, f, f_idx, fs),
+        FrequencyData(G_bla, U_avg, Y_avg, Y_var_noise, freqs, excited_bins, fs),
         Normalizer(u_mean.flatten(), u_std.flatten(),
                    y_mean.flatten(), y_std.flatten())
     )
+
+
+def _validate_input_arguments(
+    u: RealArray,
+    y: RealArray,
+    fs: float,
+    excited_bins: NDArray[np.int_] | float,
+) -> tuple[RealArray, RealArray, float, NDArray[np.int_]]:
+    """Validate and resolve data-creation arguments."""
+    u, y = np.asarray(u), np.asarray(y)
+    _validate_signal_contract(u, y)
+    fs = validate_sampling_frequency(fs)
+    excited_bins = resolve_excited_bins(excited_bins, u, fs)
+    return u, y, fs, excited_bins
+
+
+def _create_nonparametric_bla(
+    u: RealArray,
+    y: RealArray,
+    fs: float,
+    excited_bins: NDArray[np.int_],
+) -> NonparametricBLA | None:
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=NoiseCovarianceUnavailableWarning)
+            warnings.filterwarnings("ignore", category=TotalCovarianceUnavailableWarning)
+            bla = noisy_input(u, y, fs, excited_bins)
+    except InsufficientExperimentsError:
+        print(
+            "Warning: Insufficient realizations (n_realizations < nu) to compute the "
+            "nonparametric BLA. Identification can proceed in input-output mode, but "
+            "the initial linear model may be suboptimal.",
+        )
+        return None
+
+    var_noise = bla.G.noise.var
+    var_tot = bla.G.total.var
+    return NonparametricBLA(
+        G=jnp.asarray(bla.G.value),
+        var_noise=jnp.asarray(var_noise) if var_noise is not None else None,
+        var_tot=jnp.asarray(var_tot) if var_tot is not None else None,
+    )
+
+
+def _compute_output_noise_variance(
+    Y: Complex[Array, "n_bins ny n_realizations n_periods"],
+) -> Float[Array, "n_bins ny"] | None:
+    Y_with_input_axis = Y[:, :, None, :, :]
+    Y_noise_cov = compute_noise_covariance(Y_with_input_axis)
+    if Y_noise_cov is None:
+        return None
+
+    Y_var_noise = Uncertainty.from_cov(Y_noise_cov, (Y.shape[1],)).var
+    return jnp.asarray(Y_var_noise)
+
+
+def _validate_signal_contract(u: RealArray, y: RealArray) -> None:
+    """Validate that the input and output signals have the correct dimensions."""
+    if u.ndim != 4 or y.ndim != 4:
+        raise ValueError(
+            f"Input and output signals must be 4D arrays, got shapes u={u.shape} and y={y.shape}."
+        )
+
+    arrays_by_signal = {"u": u, "y": y}
+    _validate_matching_axes(arrays_by_signal, SIGNAL_CONTRACT)

@@ -1,17 +1,27 @@
 """Miscellaneous utility functions."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import best_linear_approximation as bla
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ._data_manager import InputOutputData, create_data_object
-from ._model_structures import ModelBLA, ModelNonlinearLFR
-from ._solve import SolveResult
+from freq_statespace._data_manager import InputOutputData, create_data_object
+from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
+from freq_statespace._solve import SolveResult
+
+if TYPE_CHECKING:
+    from jaxtyping import Array, Complex, Float
+
+    from freq_statespace._typing import ComplexArray, RealArray
 
 
 def right_solve(
-    a: jnp.ndarray | np.ndarray, b: jnp.ndarray | np.ndarray
-) -> jnp.ndarray | np.ndarray:
+    a: Float[Array, "..."] | Complex[Array, "..."] | RealArray | ComplexArray,
+    b: Float[Array, "..."] | Complex[Array, "..."] | RealArray | ComplexArray,
+) -> Float[Array, "..."] | Complex[Array, "..."] | RealArray | ComplexArray:
     """Solve ``x @ b = a`` for ``x`` without explicitly inverting ``b``.
 
     NumPy inputs stay in NumPy, while JAX arrays and tracers use JAX so the
@@ -33,28 +43,30 @@ def load_and_preprocess_silverbox_data() -> InputOutputData:
     """
     data = bla.dataloader.load_silverbox()["train SB multisine"]
 
-    return create_data_object(data.u, data.y, data.excited_bins, data.fs)
+    return create_data_object(data.u, data.y, data.fs, data.excited_bins)
 
 
-def extend_signal(u: jnp.ndarray, offset: int) -> jnp.ndarray:
+def extend_signal(
+    u: Float[Array, "n_samples nu n_realizations"], offset: int
+) -> Float[Array, "n_extended_samples nu n_realizations"]:
     """Extend input signal by prepending last `offset` samples.
 
     Parameters
     ----------
-    u : jnp.ndarray, shape (N, nu, R)
+    u : Float[Array, "n_samples nu n_realizations"]
         Input signal.
     offset : int
         Number of samples to prepend.
 
     Returns
     -------
-    u_ext : jnp.ndarray, shape (N + offset, nu, R)
+    u_ext : Float[Array, "n_extended_samples nu n_realizations"]
         Extended input signal.
 
     """
-    N = u.shape[0]
-    repeats = (offset // N) + 1
-    remainder = offset % N
+    n_samples = u.shape[0]
+    repeats = (offset // n_samples) + 1
+    remainder = offset % n_samples
     
     u_ext = jnp.tile(u, (repeats, 1, 1))
     if remainder > 0:
@@ -63,9 +75,11 @@ def extend_signal(u: jnp.ndarray, offset: int) -> jnp.ndarray:
     return u_ext
 
 
-def compute_steady_state_bla_state(bla: ModelBLA, data: InputOutputData) -> jnp.ndarray:
+def compute_steady_state_bla_state(
+    bla: ModelBLA, data: InputOutputData
+) -> Float[Array, "n_samples nx n_realizations"]:
     """Compute the steady-state BLA state trajectories."""
-    N, nu = data.time.u.shape[:2]
+    n_samples, nu = data.time.u.shape[:2]
     nx = bla.A.shape[0]
     
     G_xu = ModelBLA(  # parametric u->x frequency response; not the true BLA
@@ -75,9 +89,9 @@ def compute_steady_state_bla_state(bla: ModelBLA, data: InputOutputData) -> jnp.
         D_yu=jnp.zeros((nx, nu)), 
         ts=bla.ts,
         norm=bla.norm,
-    )._frequency_response(data.freq.f)  # shape (N//2 + 1, nx, nu)
-    X_bla = G_xu @ data.freq.U  # shape (N//2 + 1, nx, R)
-    x_bla = jnp.fft.irfft(X_bla, n=N, axis=0)  # shape (N, nx, R)
+    )._frequency_response(data.freq.freqs)  # shape (n_samples // 2 + 1, nx, nu)
+    X_bla = G_xu @ data.freq.U  # shape (n_samples // 2 + 1, nx, n_realizations)
+    x_bla = jnp.fft.irfft(X_bla, n=n_samples, axis=0)  # shape (n_samples, nx, n_realizations)
     return x_bla
 
 
@@ -85,7 +99,7 @@ def evaluate_model_performance(
     model: ModelBLA | ModelNonlinearLFR,
     data: InputOutputData,
     *,
-    x0: jnp.ndarray,
+    x0: Float[Array, "nx n_realizations"],
     offset: int,
     solve_result: SolveResult | None = None
 ) -> None:
@@ -97,7 +111,7 @@ def evaluate_model_performance(
         Model to be evaluated.
     data : `InputOutputData`
         Measured input-output data.
-    x0 : jnp.ndarray of shape (nx, R)
+    x0 : Float[Array, "nx n_realizations"]
         Initial state used at the beginning of each simulated realization.
     offset : int
         A non-negative number of initial samples to prepend to the input signal in
@@ -121,7 +135,7 @@ def evaluate_model_performance(
         raise TypeError(msg)
 
     u, y = data.time.u, data.time.y
-    N, ny, R = y.shape
+    n_samples, ny, n_realizations = y.shape
         
     if offset > 0:
         u = extend_signal(u, offset)
@@ -180,11 +194,13 @@ def get_key(seed: int, tag: str) -> jax.Array:
     return jax.random.fold_in(jax.random.key(seed), tag)
 
 
-def real_valued(loss: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+def real_valued(
+    loss: Complex[Array, "..."]
+) -> tuple[Float[Array, "..."], Float[Array, "..."]]:
     """Split complex loss into real and imaginary parts."""
     return loss.real, loss.imag
 
 
-def scalar_valued(loss: jnp.ndarray) -> float:
+def scalar_valued(loss: Complex[Array, "..."]) -> float:
     """Compute scalar loss from complex loss by summing squared magnitudes."""
     return jnp.sum(jnp.abs(loss) ** 2)

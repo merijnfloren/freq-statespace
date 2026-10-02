@@ -1,7 +1,9 @@
 """Nonlinear feature mappings (`z` to `features`) that are linear in the parameters."""
+from __future__ import annotations
+
 from abc import abstractmethod
 from itertools import combinations_with_replacement
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import equinox as eqx
 import jax
@@ -9,7 +11,10 @@ import jax.numpy as jnp
 import numpy as np
 from typing_extensions import Self
 
-from .._serialize import FEATURE_MAP_REGISTRY, Serializable
+from freq_statespace._serialize import FEATURE_MAP_REGISTRY, Serializable
+
+if TYPE_CHECKING:
+    from jaxtyping import Array, Float
 
 
 class AbstractFeatureMap(eqx.Module, Serializable):
@@ -25,7 +30,9 @@ class AbstractFeatureMap(eqx.Module, Serializable):
     num_features: eqx.AbstractVar[int]
 
     @abstractmethod
-    def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
+    def _compute_features(
+        self, z: Float[Array, "... nz"]
+    ) -> Float[Array, "... n_features"]:
         """Compute the nonlinear feature mapping.
 
         From inputs of shape (..., `nz`) to outputs of shape (..., `num_features`).
@@ -50,7 +57,7 @@ class Polynomial(AbstractFeatureMap):
     linear: bool
     tanh_clip: bool
     num_features: int
-    combination_matrix: jnp.ndarray = eqx.field(repr=False)
+    combination_matrix: Float[Array, "n_combinations nz"] = eqx.field(repr=False)
     _type_name: ClassVar[str] = "polynomial"
 
     def __init__(
@@ -128,8 +135,10 @@ class Polynomial(AbstractFeatureMap):
         self.num_features = num_features
         self.combination_matrix = jnp.array(combination_matrix)
         
-    def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
-        N, nz = z.shape
+    def _compute_features(
+        self, z: Float[Array, "n_samples nz"]
+    ) -> Float[Array, "n_samples n_features"]:
+        n_samples, nz = z.shape
         if nz != self.nz:
             msg = "Input size does not match the basis function size: `z.shape[1] != nz`."
             raise ValueError(msg)
@@ -138,7 +147,7 @@ class Polynomial(AbstractFeatureMap):
             z = jnp.tanh(z)
 
         # Augment input to make it consistent with the combination matrix
-        z_augmented = jnp.hstack((z, jnp.ones((N, 1))))
+        z_augmented = jnp.hstack((z, jnp.ones((n_samples, 1))))
 
         def _compute_phi_z(combination_idx):
             combination = self.combination_matrix[combination_idx]
@@ -148,7 +157,7 @@ class Polynomial(AbstractFeatureMap):
         num_combs = self.combination_matrix.shape[0]
         phi_z = jax.vmap(_compute_phi_z, out_axes=1)(jnp.arange(num_combs))
 
-        return jnp.hstack((jnp.ones((N, 1)), phi_z)) if self.offset else phi_z
+        return jnp.hstack((jnp.ones((n_samples, 1)), phi_z)) if self.offset else phi_z
     
     def _config_payload(self) -> dict[str, Any]:
         return {
@@ -217,7 +226,9 @@ class LegendrePolynomial(AbstractFeatureMap):
         self.tanh_clip = tanh_clip
         self.num_features = self.nz * self.degree + (1 if self.offset else 0)
         
-    def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
+    def _compute_features(
+        self, z: Float[Array, "n_samples nz"]
+    ) -> Float[Array, "n_samples n_features"]:
 
         def _compute_phi_z(k, state):
             phi_z, phi_z_previous, phi_z_two_before = state
@@ -231,16 +242,16 @@ class LegendrePolynomial(AbstractFeatureMap):
         if self.tanh_clip:
             z = jnp.tanh(z)
 
-        N = z.shape[0]
-        phi_z0 = jnp.zeros((self.degree - 1, N, self.nz))
+        n_samples = z.shape[0]
+        phi_z0 = jnp.zeros((self.degree - 1, n_samples, self.nz))
         loop_init = (phi_z0, z, jnp.ones_like(z))
 
         phi_z = jax.lax.fori_loop(
             2, self.degree + 1, _compute_phi_z, loop_init, unroll=True
         )[0]
 
-        phi_z = jnp.transpose(phi_z, (1, 2, 0)).reshape(N, -1)
-        phi_z = jnp.hstack((jnp.ones((N, 1)), z, phi_z))
+        phi_z = jnp.transpose(phi_z, (1, 2, 0)).reshape(n_samples, -1)
+        phi_z = jnp.hstack((jnp.ones((n_samples, 1)), z, phi_z))
         return phi_z if self.offset else phi_z[:, 1:]
 
     def _config_payload(self) -> dict[str, Any]:
@@ -297,8 +308,8 @@ class ChebyshevPolynomial(AbstractFeatureMap):
             Maximum polynomial degree.
         chebyshev_kind : int
             Polynomial type:
-            - `1`: First kind (orthogonal w.r.t. 1/sqrt(1 - x²))
-            - `2`: Second kind (orthogonal w.r.t. sqrt(1 - x²))
+            - `1`: First kind (orthogonal w.r.t. 1/sqrt(1 - x^2))
+            - `2`: Second kind (orthogonal w.r.t. sqrt(1 - x^2))
         offset : bool, optional
             Whether to include a constant offset term. Defaults to `True`.
         tanh_clip : bool, optional
@@ -316,7 +327,9 @@ class ChebyshevPolynomial(AbstractFeatureMap):
         self.tanh_clip = tanh_clip
         self.num_features = self.nz * self.degree + (1 if self.offset else 0)
         
-    def _compute_features(self, z: jnp.ndarray) -> jnp.ndarray:
+    def _compute_features(
+        self, z: Float[Array, "n_samples nz"]
+    ) -> Float[Array, "n_samples n_features"]:
 
         def _compute_phi_z(k, state):
             phi_z, phi_z_previous, phi_z_two_before = state
@@ -327,16 +340,16 @@ class ChebyshevPolynomial(AbstractFeatureMap):
         if self.tanh_clip:
             z = jnp.tanh(z)
 
-        N = z.shape[0]
-        phi_z0 = jnp.zeros((self.degree - 1, N, self.nz))
+        n_samples = z.shape[0]
+        phi_z0 = jnp.zeros((self.degree - 1, n_samples, self.nz))
         loop_init = (phi_z0, self.chebyshev_kind * z, jnp.ones_like(z))
 
         phi_z = jax.lax.fori_loop(
             2, self.degree + 1, _compute_phi_z, loop_init, unroll=True
         )[0]
 
-        phi_z = jnp.transpose(phi_z, (1, 2, 0)).reshape(N, -1)
-        phi_z = jnp.hstack((jnp.ones((N, 1)), self.chebyshev_kind * z, phi_z))
+        phi_z = jnp.transpose(phi_z, (1, 2, 0)).reshape(n_samples, -1)
+        phi_z = jnp.hstack((jnp.ones((n_samples, 1)), self.chebyshev_kind * z, phi_z))
         return phi_z if self.offset else phi_z[:, 1:]
     
     def _config_payload(self) -> dict[str, Any]:

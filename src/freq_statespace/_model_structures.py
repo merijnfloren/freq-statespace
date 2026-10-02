@@ -1,5 +1,7 @@
 """BLA and NL-LFR model classes, optimized for use with JAX and Equinox."""
-from typing import Any, ClassVar
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import equinox as eqx
 import jax
@@ -7,10 +9,15 @@ import jax.numpy as jnp
 import numpy as np
 from typing_extensions import Self
 
-from . import _misc
-from ._data_manager import Normalizer
-from ._serialize import MODEL_REGISTRY, Serializable
-from .static._nonlin_funcs import AbstractNonlinearFunction
+from freq_statespace import _misc
+from freq_statespace._data_manager import Normalizer
+from freq_statespace._serialize import MODEL_REGISTRY, Serializable
+from freq_statespace.static._nonlin_funcs import AbstractNonlinearFunction
+
+if TYPE_CHECKING:
+    from jaxtyping import Array, Complex, Float
+
+    from freq_statespace._typing import RealArray
 
 
 @MODEL_REGISTRY.register
@@ -19,13 +26,13 @@ class ModelBLA(eqx.Module, Serializable):
 
     Parameters
     ----------
-    A : jnp.ndarray, shape (nx, nx)
+    A : Float[Array, "nx nx"]
         State transition matrix.
-    B_u : jnp.ndarray, shape (nx, nu)
+    B_u : Float[Array, "nx nu"]
         Input-to-state matrix.
-    C_y : jnp.ndarray, shape (ny, nx)
+    C_y : Float[Array, "ny nx"]
         State-to-output matrix.
-    D_yu : jnp.ndarray, shape (ny, nu)
+    D_yu : Float[Array, "ny nu"]
         Input-to-output matrix.
     ts : float
         Sampling time (in seconds) of the discrete system.
@@ -34,10 +41,10 @@ class ModelBLA(eqx.Module, Serializable):
 
     """
 
-    A: jnp.ndarray = eqx.field(converter=jnp.asarray)
-    B_u: jnp.ndarray = eqx.field(converter=jnp.asarray)
-    C_y: jnp.ndarray = eqx.field(converter=jnp.asarray)
-    D_yu: jnp.ndarray = eqx.field(converter=jnp.asarray)
+    A: Float[Array, "nx nx"] = eqx.field(converter=jnp.asarray)
+    B_u: Float[Array, "nx nu"] = eqx.field(converter=jnp.asarray)
+    C_y: Float[Array, "ny nx"] = eqx.field(converter=jnp.asarray)
+    D_yu: Float[Array, "ny nu"] = eqx.field(converter=jnp.asarray)
     ts: float
     norm: Normalizer
     _type_name: ClassVar[str] = "model_bla"
@@ -63,31 +70,33 @@ class ModelBLA(eqx.Module, Serializable):
 
     def simulate(
         self,
-        u: np.ndarray,
+        u: RealArray,
         *,
-        x0: np.ndarray | None = None,
+        x0: RealArray | None = None,
         offset: int | None = None
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[RealArray, RealArray, RealArray]:
         """Simulate the BLA model in the time domain for arbitrary input signals.
 
         Parameters
         ----------
-        u : np.ndarray, shape (N,), (N, nu), (N, nu, R), or (N, nu, R, P)
+        u : RealArray
+            Shape (n_samples,), (n_samples, nu), (n_samples, nu, n_realizations),
+            or (n_samples, nu, n_realizations, n_periods).
             Input signal. This array can be 1D up to 4D, with:
-            - N : number of time steps  
+            - n_samples : number of time samples
             - nu : number of inputs  
-            - R : number of realizations  
-            - P : number of periods  
+            - n_realizations : number of realizations
+            - n_periods : number of periods
 
             The input does not need to be normalized; this is handled internally.
             Since this is a public method (not used within an optimization loop), 
             the input also does not need to be periodic.
 
-            If the fourth dimension P is provided, it is assumed that the input is
+            If the fourth dimension n_periods is provided, it is assumed that the input is
             periodic. In that case, all periods are internally concatenated into
             the first dimension, effectively simulating multiple periods sequentially.
 
-        x0 : np.ndarray, shape (nx,) or (nx, R), optional
+        x0 : RealArray, shape (nx,) or (nx, n_realizations), optional
             Initial state for simulation. If not provided, the initial state is
             assumed to be zero.
 
@@ -100,14 +109,18 @@ class ModelBLA(eqx.Module, Serializable):
 
         Returns
         -------
-        y : np.ndarray, shape (N, ny), (N, ny, R), or (N, ny, R, P)
+        y : RealArray
+            Shape (n_samples, ny), (n_samples, ny, n_realizations), or
+            (n_samples, ny, n_realizations, n_periods).
             Simulated output time series, at least 2D, with ny as the number of
             output channels.
 
-        t : np.ndarray, shape (N,)
-            Time vector corresponding to one simulation of length N.
+        t : RealArray, shape (n_samples,)
+            Time vector corresponding to one simulation of length n_samples.
 
-        x : np.ndarray, shape (N, nx), (N, nx, R), or (N, nx, R, P)
+        x : RealArray
+            Shape (n_samples, nx), (n_samples, nx, n_realizations), or
+            (n_samples, nx, n_realizations, n_periods).
             Simulated state trajectories, at least 2D, with nx as the number of
             state variables.
 
@@ -129,65 +142,70 @@ class ModelBLA(eqx.Module, Serializable):
     
     def _simulate(
         self,
-        u: jnp.ndarray,
-        x0: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        u: Float[Array, "n_samples nu n_realizations"],
+        x0: Float[Array, "nx n_realizations"],
+    ) -> tuple[
+        Float[Array, "n_samples ny n_realizations"],
+        Float[Array, "n_samples nx n_realizations"],
+    ]:
         """Simulate the BLA model in the time domain.
 
         To be used within an optimization loop, as it assumes normalized data.
 
         Parameters
         ----------
-        u : jnp.ndarray, shape (N, nu, R)
+        u : Float[Array, "n_samples nu n_realizations"]
             Normalized input signal.
-        x0 : jnp.ndarray of shape (nx, R)
+        x0 : Float[Array, "nx n_realizations"]
             Initial state of the system. 
 
         Returns
         -------
-        Y : jnp.ndarray, shape (N, ny, R)
+        Y : Float[Array, "n_samples ny n_realizations"]
             Simulated output trajectories.
-        X : jnp.ndarray, of shape (N, nx, R)
+        X : Float[Array, "n_samples nx n_realizations"]
             Simulated state trajectories.
-        W : jnp.ndarray, of shape (N, nw, R)
+        W : Float[Array, "n_samples nw n_realizations"]
             Static nonlinear function outputs.
-        Z : jnp.ndarray, of shape (N, nz, R)
+        Z : Float[Array, "n_samples nz n_realizations"]
             Static nonlinear function inputs.
 
         """
         def _make_step(k, state):
             X, Y_accum, X_accum = state
-            U = jax.lax.dynamic_slice(u, (k, 0, 0), (1, nu, R)).squeeze(axis=0)
+            U = jax.lax.dynamic_slice(u, (k, 0, 0), (1, nu, n_realizations)).squeeze(axis=0)
 
             # Model equations
             X_next = self.A @ X + self.B_u @ U
             Y = self.C_y @ X + self.D_yu @ U
             return X_next, Y_accum.at[k, ...].set(Y), X_accum.at[k, ...].set(X)
 
-        N, nu, R = u.shape
+        n_samples, nu, n_realizations = u.shape
         ny, nx = self.C_y.shape
 
         loop_init = (
             x0,
-            jnp.zeros((N, ny, R)),  # Y_accum
-            jnp.zeros((N, nx, R)),  # X_accum
+            jnp.zeros((n_samples, ny, n_realizations)),  # Y_accum
+            jnp.zeros((n_samples, nx, n_realizations)),  # X_accum
         )
-        Y, X = jax.lax.fori_loop(0, N, _make_step, loop_init)[1:]
+        Y, X = jax.lax.fori_loop(0, n_samples, _make_step, loop_init)[1:]
         return Y, X
 
-    def _frequency_response(self, f: np.ndarray) -> jnp.ndarray:
+    def _frequency_response(
+        self, freqs: RealArray
+    ) -> Complex[Array, "n_bins ny nu"]:
         """Compute the frequency response of the system.
 
         To be used within an optimization loop, as it assumes normalized data.
 
         Parameters
         ----------
-        f : np.ndarray, shape (freqs,)
+        freqs : RealArray, shape (n_bins,)
             Frequency points in Hz.
 
         Returns
         -------
-        G : jnp.ndarray
+        G : Complex[Array, "n_bins ny nu"]
             Frequency response matrix of shape (freqs, ny, nu).
 
         """
@@ -196,13 +214,13 @@ class ModelBLA(eqx.Module, Serializable):
             return C_y @ G_x + self.D_yu
 
         fs = 1 / self.ts
-        z = 2 * jnp.pi * f / fs
+        z = 2 * jnp.pi * freqs / fs
         zj = jnp.exp(z * 1j)
 
         I_nx = jnp.eye(self.A.shape[0])
         B_u = self.B_u.astype(complex)  # to suppress a warning
         C_y = self.C_y.astype(complex)  # to suppress a warning
-        return jax.vmap(G)(np.arange(len(f)))
+        return jax.vmap(G)(np.arange(len(freqs)))
     
     def _config_payload(self) -> dict[str, Any]:
         """Convert structural information to a dictionary for serialization."""
@@ -221,10 +239,10 @@ class ModelNonlinearLFR(ModelBLA):
     and static nonlinear feedback.
     """
 
-    B_w: jnp.ndarray = eqx.field(converter=jnp.asarray)
-    C_z: jnp.ndarray = eqx.field(converter=jnp.asarray)
-    D_yw: jnp.ndarray = eqx.field(converter=jnp.asarray)
-    D_zu: jnp.ndarray = eqx.field(converter=jnp.asarray)
+    B_w: Float[Array, "nx nw"] = eqx.field(converter=jnp.asarray)
+    C_z: Float[Array, "nz nx"] = eqx.field(converter=jnp.asarray)
+    D_yw: Float[Array, "ny nw"] = eqx.field(converter=jnp.asarray)
+    D_zu: Float[Array, "nz nu"] = eqx.field(converter=jnp.asarray)
     func_static: AbstractNonlinearFunction
     
     # Keep a private reference to the original BLA for initial state selection
@@ -239,14 +257,14 @@ class ModelNonlinearLFR(ModelBLA):
     
     def __init__(
         self,
-        A: jnp.ndarray,
-        B_u: jnp.ndarray,
-        C_y: jnp.ndarray,
-        D_yu: jnp.ndarray,
-        B_w: jnp.ndarray,
-        C_z: jnp.ndarray,
-        D_yw: jnp.ndarray,
-        D_zu: jnp.ndarray,
+        A: Float[Array, "nx nx"],
+        B_u: Float[Array, "nx nu"],
+        C_y: Float[Array, "ny nx"],
+        D_yu: Float[Array, "ny nu"],
+        B_w: Float[Array, "nx nw"],
+        C_z: Float[Array, "nz nx"],
+        D_yw: Float[Array, "ny nw"],
+        D_zu: Float[Array, "nz nu"],
         func_static: AbstractNonlinearFunction,
         ts: float,
         norm: Normalizer
@@ -255,21 +273,21 @@ class ModelNonlinearLFR(ModelBLA):
 
         Parameters
         ----------
-        A : jnp.ndarray, shape (nx, nx)
+        A : Float[Array, "nx nx"]
             State transition matrix.
-        B_u : jnp.ndarray, shape (nx, nu)
+        B_u : Float[Array, "nx nu"]
             Input-to-state matrix.
-        C_y : jnp.ndarray, shape (ny, nx)
+        C_y : Float[Array, "ny nx"]
             State-to-output matrix.
-        D_yu : jnp.ndarray, shape (ny, nu)
+        D_yu : Float[Array, "ny nu"]
             Input-to-output matrix.
-        B_w : jnp.ndarray, shape (nx, nw)
+        B_w : Float[Array, "nx nw"]
             Feedback input-to-state matrix.
-        C_z : jnp.ndarray, shape (nz, nx)
+        C_z : Float[Array, "nz nx"]
             State-to-static nonlinear function matrix.
-        D_yw : jnp.ndarray, shape (ny, nw)
+        D_yw : Float[Array, "ny nw"]
             Feedback input-to-output matrix.
-        D_zu : jnp.ndarray, shape (nz, nu)
+        D_zu : Float[Array, "nz nu"]
             Input-to-static nonlinear function matrix.
         func_static : AbstractNonlinearFunction
             Static nonlinear function mapping `z` to `w`.
@@ -290,7 +308,7 @@ class ModelNonlinearLFR(ModelBLA):
     @classmethod
     def _from_config(cls, config: dict[str, Any]) -> Self:
         """Create a dummy PyTree with the same structure as a to-be-loaded model."""
-        from ._serialize import NONLINEAR_FUNCTION_REGISTRY
+        from freq_statespace._serialize import NONLINEAR_FUNCTION_REGISTRY
 
         bla = ModelBLA._from_config(config)
         nu, ny, nx = config["nu"], config["ny"], config["nx"]
@@ -318,31 +336,33 @@ class ModelNonlinearLFR(ModelBLA):
         
     def simulate(
         self,
-        u: np.ndarray,
+        u: RealArray,
         *,
-        x0: np.ndarray | None = None,
+        x0: RealArray | None = None,
         offset: int | None = None
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[RealArray, RealArray, RealArray, RealArray, RealArray]:
         """Simulate the BLA model in the time domain for arbitrary input signals.
 
         Parameters
         ----------
-        u : np.ndarray, shape (N,), (N, nu), (N, nu, R), or (N, nu, R, P)
+        u : RealArray
+            Shape (n_samples,), (n_samples, nu), (n_samples, nu, n_realizations),
+            or (n_samples, nu, n_realizations, n_periods).
             Input signal. This array can be 1D up to 4D, with:
-            - N : number of time steps  
+            - n_samples : number of time samples
             - nu : number of inputs  
-            - R : number of realizations  
-            - P : number of periods  
+            - n_realizations : number of realizations
+            - n_periods : number of periods
 
             The input does not need to be normalized; this is handled internally.
             Since this is a public method (not used within an optimization loop), 
             the input also does not need to be periodic.
 
-            If the fourth dimension P is provided, it is assumed that the input is
+            If the fourth dimension n_periods is provided, it is assumed that the input is
             periodic. In that case, all periods are internally concatenated into
             the first dimension, effectively simulating multiple periods sequentially.
 
-        x0 : np.ndarray, shape (nx,) or (nx, R), optional
+        x0 : RealArray, shape (nx,) or (nx, n_realizations), optional
             Initial state for simulation. If not provided, the initial state is
             assumed to be zero.
 
@@ -355,20 +375,28 @@ class ModelNonlinearLFR(ModelBLA):
 
         Returns
         -------
-        y : np.ndarray, shape (N, ny), (N, ny, R), or (N, ny, R, P)
+        y : RealArray
+            Shape (n_samples, ny), (n_samples, ny, n_realizations), or
+            (n_samples, ny, n_realizations, n_periods).
             Simulated output time series, at least 2D, with ny as the number of
             output channels.
 
-        t : np.ndarray, shape (N,)
-            Time vector corresponding to one simulation of length N.
+        t : RealArray, shape (n_samples,)
+            Time vector corresponding to one simulation of length n_samples.
 
-        x : np.ndarray, shape (N, nx), (N, nx, R), or (N, nx, R, P)
+        x : RealArray
+            Shape (n_samples, nx), (n_samples, nx, n_realizations), or
+            (n_samples, nx, n_realizations, n_periods).
             Simulated state trajectories, at least 2D, with nx as the number of
             state variables.
-        w : np.ndarray, shape (N, nw), (N, nw, R), or (N, nw, R, P)
+        w : RealArray
+            Shape (n_samples, nw), (n_samples, nw, n_realizations), or
+            (n_samples, nw, n_realizations, n_periods).
             Simulated static nonlinear function outputs, at least 2D, with nw as
             the number of static nonlinear outputs.
-        z : np.ndarray, shape (N, nz), (N, nz, R), or (N, nz, R, P)
+        z : RealArray
+            Shape (n_samples, nz), (n_samples, nz, n_realizations), or
+            (n_samples, nz, n_realizations, n_periods).
             Simulated static nonlinear function inputs, at least 2D, with nz as
             the number of static nonlinear inputs.
 
@@ -394,35 +422,40 @@ class ModelNonlinearLFR(ModelBLA):
 
     def _simulate(
         self,
-        u: jnp.ndarray,
-        x0: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        u: Float[Array, "n_samples nu n_realizations"],
+        x0: Float[Array, "nx n_realizations"],
+    ) -> tuple[
+        Float[Array, "n_samples ny n_realizations"],
+        Float[Array, "n_samples nx n_realizations"],
+        Float[Array, "n_samples nw n_realizations"],
+        Float[Array, "n_samples nz n_realizations"],
+    ]:
         """Simulate the NL-LFR model in the time domain.
 
         To be used within an optimization loop, as it assumes normalized data.
 
         Parameters
         ----------
-        u : jnp.ndarray, shape (N, nu, R)
+        u : Float[Array, "n_samples nu n_realizations"]
             Normalized input signal.
-        x0 : jnp.ndarray of shape (nx, R)
+        x0 : Float[Array, "nx n_realizations"]
             Initial state of the system.
 
         Returns
         -------
-        Y : jnp.ndarray, shape (N, ny, R)
+        Y : Float[Array, "n_samples ny n_realizations"]
             Simulated output trajectories.
-        X : jnp.ndarray, of shape (N, nx, R)
+        X : Float[Array, "n_samples nx n_realizations"]
             Simulated state trajectories.
-        W : jnp.ndarray, of shape (N, nw, R)
+        W : Float[Array, "n_samples nw n_realizations"]
             Static nonlinear function outputs.
-        Z : jnp.ndarray, of shape (N, nz, R)
+        Z : Float[Array, "n_samples nz n_realizations"]
             Static nonlinear function inputs.
 
         """
         def _make_step(k, state):
             X, Y_accum, X_accum, W_accum, Z_accum = state
-            U = jax.lax.dynamic_slice(u, (k, 0, 0), (1, nu, R)).squeeze(axis=0)
+            U = jax.lax.dynamic_slice(u, (k, 0, 0), (1, nu, n_realizations)).squeeze(axis=0)
 
             # Model equations
             Z = self.C_z @ X + self.D_zu @ U
@@ -437,19 +470,19 @@ class ModelNonlinearLFR(ModelBLA):
                 Z_accum.at[k, ...].set(Z),
             )
 
-        N, nu, R = u.shape
+        n_samples, nu, n_realizations = u.shape
         nz, nx = self.C_z.shape
         ny, nw = self.D_yw.shape
 
         loop_init = (
             x0,
-            jnp.zeros((N, ny, R)),  # Y_accum
-            jnp.zeros((N, nx, R)),  # X_accum
-            jnp.zeros((N, nw, R)),  # W_accum
-            jnp.zeros((N, nz, R)),  # Z_accum
+            jnp.zeros((n_samples, ny, n_realizations)),  # Y_accum
+            jnp.zeros((n_samples, nx, n_realizations)),  # X_accum
+            jnp.zeros((n_samples, nw, n_realizations)),  # W_accum
+            jnp.zeros((n_samples, nz, n_realizations)),  # Z_accum
         )
         
-        Y, X, W, Z = jax.lax.fori_loop(0, N, _make_step, loop_init)[1:]
+        Y, X, W, Z = jax.lax.fori_loop(0, n_samples, _make_step, loop_init)[1:]
         return Y, X, W, Z
     
     def _config_payload(self) -> dict[str, Any]:
@@ -460,9 +493,9 @@ class ModelNonlinearLFR(ModelBLA):
         
 def _simulate_core(
     model: ModelBLA | ModelNonlinearLFR,
-    u: np.ndarray,
+    u: RealArray,
     *,
-    x0: np.ndarray | None,
+    x0: RealArray | None,
     offset: int | None,
     with_wz: bool,
 ):
@@ -471,18 +504,18 @@ def _simulate_core(
 
     u_dim = u.ndim
 
-    # Ensure `u` is 4D: (N, nu, R, P)
+    # Ensure `u` is 4D: (n_samples, nu, n_realizations, n_periods)
     u = u.reshape(u.shape + (1,) * (4 - u.ndim))
-    N, nu, R, P = u.shape
+    n_samples, nu, n_realizations, n_periods = u.shape
 
-    # Stack periods into the first dimension: (N * P, nu, R)
-    u = jnp.transpose(u, (0, 3, 1, 2)).reshape(N * P, nu, R, order="F")
+    # Stack periods into the first dimension: (n_samples * n_periods, nu, n_realizations)
+    u = jnp.transpose(u, (0, 3, 1, 2)).reshape(n_samples * n_periods, nu, n_realizations, order="F")
 
     if offset is not None:
         u = _misc.extend_signal(u, offset)
 
     nx = model.A.shape[0]
-    x0 = jnp.zeros((nx, R)) if x0 is None else jnp.asarray(x0)
+    x0 = jnp.zeros((nx, n_realizations)) if x0 is None else jnp.asarray(x0)
 
     # Normalize input
     u_mean = model.norm.u_mean.reshape(1, -1, 1)
@@ -513,7 +546,9 @@ def _simulate_core(
 
     # Helper to reshape back to match input structure
     def _reshape_back(arr):
-        arr = jnp.reshape(arr, (N, P, -1, R), order="F").transpose((0, 2, 3, 1))
+        arr = jnp.reshape(
+            arr, (n_samples, n_periods, -1, n_realizations), order="F"
+        ).transpose((0, 2, 3, 1))
         if u_dim in (1, 2):
             arr = jnp.squeeze(arr, axis=(2, 3))
         elif u_dim == 3:
@@ -536,9 +571,9 @@ def _simulate_core(
 
 def _validate_user_inputs(
     model: ModelBLA | ModelNonlinearLFR,
-    u: np.ndarray | jnp.ndarray,
+    u: RealArray | Float[Array, "..."],
     offset: int | None,
-    x0: jnp.ndarray | None,
+    x0: Float[Array, "..."] | None,
 ) -> None:
     
     nu = u.shape[1] if u.ndim > 1 else 1
