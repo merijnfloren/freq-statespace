@@ -42,7 +42,7 @@ If JAX isn't already installed in your environment, the above command will insta
 
 ## Quick example
 
-We show an exemplary training pipeline on the [Silverbox benchmark dataset](https://www.nonlinearbenchmark.org/benchmarks/silverbox), containing input-output measurements from an electronic circuit that mimics a mass-spring-damper system with a cubic spring nonlinearity.
+We show an exemplary training pipeline on the [Silverbox benchmark dataset](https://www.nonlinearbenchmark.org/benchmarks/silverbox), containing input-output measurements from an electronic circuit that mimics a mass-spring-damper system with a cubic spring nonlinearity. Note that running this example will download the benchmark data to the local cache when it is not already available.
 
 We first estimate the BLA:
 

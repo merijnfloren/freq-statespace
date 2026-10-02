@@ -1,7 +1,7 @@
 """Miscellaneous utility functions."""
+import best_linear_approximation as bla
 import jax
 import jax.numpy as jnp
-import nonlinear_benchmarks
 import numpy as np
 
 from ._data_manager import InputOutputData, create_data_object
@@ -31,45 +31,9 @@ def load_and_preprocess_silverbox_data() -> InputOutputData:
         Preprocessed Silverbox training data.
 
     """
-    train = nonlinear_benchmarks.Silverbox()[0]
-    u, y = train.u, train.y
+    data = bla.dataloader.load_silverbox()["train SB multisine"]
 
-    N = 8192  # number of samples per period
-    R = 6  # number of random phase multisine realizations
-    P = 1  # number of periods
-
-    nu, ny = 1, 1  # SISO system
-
-    fs = 1e7 / 2**14  # [Hz]
-    f_idx = np.arange(1, 2 * 1342, 2)  # excited odd harmonics
-
-    # Process data
-    N_init = 164  # number of initial samples to be discarded
-    N_z = 100  # number of zero samples separating the blocks visually
-    N_tr = 400  # number of transient samples
-
-    u_train = np.zeros((N, R))
-    y_train = np.zeros((N, R))
-    for k in range(R):
-        if k == 0:
-            u = u[N_init:]
-            y = y[N_init:]
-        else:
-            idx = N_z + N_tr
-            u = u[idx:]
-            y = y[idx:]
-
-        u_train[:, k] = u[:N]
-        y_train[:, k] = y[:N]
-
-        u = u[N:]
-        y = y[N:]
-
-    # Reshape data to required dimensions
-    u_train = u_train.reshape(N, nu, R, P)
-    y_train = y_train.reshape(N, ny, R, P)
-
-    return create_data_object(u_train, y_train, f_idx, fs)
+    return create_data_object(data.u, data.y, data.excited_bins, data.fs)
 
 
 def extend_signal(u: jnp.ndarray, offset: int) -> jnp.ndarray:
