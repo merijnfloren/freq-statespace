@@ -75,5 +75,6 @@ dev = [
     "matplotlib>=3.11.2",
     "nonlinear-benchmarks>=1.0.1",
     "optax>=0.2.8",
+    "pyqt5>=5.15.11",
 ]
 

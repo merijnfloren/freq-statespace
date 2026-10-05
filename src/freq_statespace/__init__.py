@@ -14,8 +14,10 @@ The API is structured around three main namespaces:
 Additional components:
 - ``create_data_object`` for constructing ``InputOutputData`` objects, the starting
     point for all identification routines.
+- ``create_data_object_from_bla`` for constructing ``InputOutputData`` from a
+    best-linear-approximation result.
 - ``save_model`` and ``load_model`` for saving and loading model instances.
--  ``InputOutputData``, ``TimeData``, ``FrequencyData``, ``NonparametricBLA``,
+-  ``InputOutputData``, ``TimeData``, ``FrequencyData``, ``BLAEstimate``,
     and ``Normalizer`` data objects.
 - ``ModelBLA`` and ``ModelNonlinearLFR`` as the core model classes.
 - ``SolveResult`` for detailed information about optimization routines.
@@ -27,12 +29,13 @@ from freq_statespace import _best_linear_approximation as lin
 from freq_statespace import _nonlin_lfr as nonlin
 from freq_statespace import static
 from freq_statespace._data_manager import (
+    BLAEstimate,
     FrequencyData,
     InputOutputData,
-    NonparametricBLA,
     Normalizer,
     TimeData,
     create_data_object,
+    create_data_object_from_bla,
 )
 from freq_statespace._misc import load_and_preprocess_silverbox_data
 from freq_statespace._model_structures import ModelBLA, ModelNonlinearLFR
@@ -44,12 +47,13 @@ __all__ = [
     "lin",
     "nonlin",
     "static",
+    "BLAEstimate",
     "FrequencyData",
     "InputOutputData",
-    "NonparametricBLA",
     "Normalizer",
     "TimeData",
     "create_data_object",
+    "create_data_object_from_bla",
     "load_and_preprocess_silverbox_data",
     "ModelBLA",
     "ModelNonlinearLFR",

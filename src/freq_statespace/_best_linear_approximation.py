@@ -12,7 +12,7 @@ from scipy.linalg import solve_discrete_lyapunov
 
 from freq_statespace import _misc
 from freq_statespace._config import PRINT_EVERY, SOLVER, STABILITY_MARGIN, DeviceLike
-from freq_statespace._data_manager import FrequencyData, InputOutputData, NonparametricBLA
+from freq_statespace._data_manager import BLAEstimate, FrequencyData, InputOutputData
 from freq_statespace._model_structures import ModelBLA
 from freq_statespace._solve import SolveResult, solve
 from freq_statespace.dep import fsid
@@ -561,7 +561,7 @@ def _normalize_states(model: ModelBLA, data: InputOutputData) -> ModelBLA:
 
 def _validate_weighting(
     freq_weighting: bool,
-    G_bla: NonparametricBLA | None,
+    G_bla: BLAEstimate | None,
     input_output_mode: bool,
     print_warning: bool,
 ) -> bool:
@@ -598,7 +598,7 @@ def _validate_weighting(
 def _validate_inputs(
     input_output_mode: bool,
     freq_weighting: bool,
-    G_bla: NonparametricBLA | None,
+    G_bla: BLAEstimate | None,
     print_warning: bool
 ) -> tuple[bool, bool]:
     """Validate inputs for subspace identification."""

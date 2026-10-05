@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from jaxtyping import Array, Complex, Float
     from numpy.typing import NDArray
 
+    from best_linear_approximation import NonparametricBLA as BestLinearApproximationBLA
     from freq_statespace._typing import ComplexArray, RealArray
 
 
@@ -67,8 +68,8 @@ class TimeData:
 
 
 @dataclass(frozen=True)
-class NonparametricBLA:
-    """Nonparametric Best Linear Approximation (BLA) and distortion levels.
+class BLAEstimate:
+    """Normalized nonparametric Best Linear Approximation (BLA).
 
     Attributes
     ----------
@@ -92,7 +93,7 @@ class FrequencyData:
 
     Attributes
     ----------
-    G_bla : `NonparametricBLA`, optional
+    G_bla : `BLAEstimate`, optional
         Nonparametric BLA estimate with variance estimates. Is `None` if
         insufficient realizations are available to compute the frequency
         response matrix (i.e., `n_realizations < nu`).
@@ -111,7 +112,7 @@ class FrequencyData:
 
     """
 
-    G_bla: NonparametricBLA | None
+    G_bla: BLAEstimate | None
     U: Complex[Array, "n_bins nu n_realizations"]
     Y: Complex[Array, "n_bins ny n_realizations"]
     Y_var_noise: Float[Array, "n_bins ny"] | None
@@ -200,42 +201,56 @@ def create_data_object(
 
     """
     u, y, fs, excited_bins = _validate_input_arguments(u, y, fs, excited_bins)
-
-    ts = 1 / fs
-    n_samples = u.shape[0]
-    t = np.arange(n_samples) * ts
-
-    # Normalize data (zero mean, unit variance)
-    u_mean = np.mean(u, axis=(0, 2, 3), keepdims=True)
-    y_mean = np.mean(y, axis=(0, 2, 3), keepdims=True)
-    u_std = np.std(u, axis=(0, 2, 3), keepdims=True)
-    y_std = np.std(y, axis=(0, 2, 3), keepdims=True)
-
-    u = (u - u_mean) / u_std
-    y = (y - y_mean) / y_std
-
+    u, y, norm = _normalize_signals(u, y)
     G_bla = _create_nonparametric_bla(u, y, fs, excited_bins)
+    return _create_normalized_data_object(
+        u,
+        y,
+        fs,
+        excited_bins,
+        norm,
+        G_bla,
+        compute_output_noise_variance=True,
+    )
 
-    # Compute DFTs
-    U = np.fft.rfft(u, axis=0)
-    Y = np.fft.rfft(y, axis=0)
-    freqs = np.arange(n_samples // 2 + 1) * fs / n_samples
-    Y_avg = np.mean(Y, axis=3)
-    Y_var_noise = _compute_output_noise_variance(Y)
 
-    # We proceed with data that is averaged over periods
-    u_avg, y_avg = np.mean(u, axis=3), np.mean(y, axis=3)
-    U_avg = np.mean(U, axis=3)
+def create_data_object_from_bla(
+    bla: BestLinearApproximationBLA,
+) -> InputOutputData:
+    """Create an InputOutputData object from a best-linear-approximation result.
 
-    # Finally, we convert the input-output data to JAX arrays
-    u_avg, y_avg = jnp.asarray(u_avg), jnp.asarray(y_avg)
-    U_avg, Y_avg = jnp.asarray(U_avg), jnp.asarray(Y_avg)
+    This permits identification from specialized BLA estimates, including a BLA
+    obtained with a closed-loop method. The BLA's full input and output spectra
+    are transformed back to realization-layout time signals, normalized locally,
+    and then packaged for frequency-domain state-space identification.
 
-    return InputOutputData(
-        TimeData(u_avg, y_avg, t, ts),
-        FrequencyData(G_bla, U_avg, Y_avg, Y_var_noise, freqs, excited_bins, fs),
-        Normalizer(u_mean.flatten(), u_std.flatten(),
-                   y_mean.flatten(), y_std.flatten())
+    Parameters
+    ----------
+    bla : best_linear_approximation.NonparametricBLA
+        BLA result with full input and output spectra, frequency metadata, and
+        experiment metadata.
+
+    Returns
+    -------
+    InputOutputData
+        Normalized time and frequency data, including a scaled BLA estimate and
+        its available uncertainty estimates.
+
+    """
+    u = _reconstruct_realization_signal(bla.spectra.U.value, bla.experiment.n_samples)
+    y = _reconstruct_realization_signal(bla.spectra.Y.value, bla.experiment.n_samples)
+    u, y, norm = _normalize_signals(u, y)
+
+    G_bla = _normalize_bla_estimate(bla, norm)
+    Y_var_noise = _normalize_output_noise_variance(bla.spectra.Y.noise.var, norm)
+    return _create_normalized_data_object(
+        u,
+        y,
+        bla.freq.fs,
+        bla.freq.excited_bins,
+        norm,
+        G_bla,
+        Y_var_noise,
     )
 
 
@@ -253,32 +268,132 @@ def _validate_input_arguments(
     return u, y, fs, excited_bins
 
 
+def _normalize_signals(u: RealArray, y: RealArray) -> tuple[RealArray, RealArray, Normalizer]:
+    """Normalize input and output signals channel-wise."""
+    u_mean = np.mean(u, axis=(0, 2, 3), keepdims=True)
+    y_mean = np.mean(y, axis=(0, 2, 3), keepdims=True)
+    u_std = np.std(u, axis=(0, 2, 3), keepdims=True)
+    y_std = np.std(y, axis=(0, 2, 3), keepdims=True)
+
+    u = (u - u_mean) / u_std
+    y = (y - y_mean) / y_std
+    norm = Normalizer(
+        u_mean.flatten(),
+        u_std.flatten(),
+        y_mean.flatten(),
+        y_std.flatten(),
+    )
+    return u, y, norm
+
+
+def _create_normalized_data_object(
+    u: RealArray,
+    y: RealArray,
+    fs: float,
+    excited_bins: NDArray[np.int_],
+    norm: Normalizer,
+    G_bla: BLAEstimate | None,
+    Y_var_noise: Float[Array, "n_bins ny"] | None = None,
+    *,
+    compute_output_noise_variance: bool = False,
+) -> InputOutputData:
+    """Create an InputOutputData object from normalized realization-layout signals."""
+    n_samples = u.shape[0]
+    ts = 1 / fs
+    t = np.arange(n_samples) * ts
+
+    U = np.fft.rfft(u, axis=0)
+    Y = np.fft.rfft(y, axis=0)
+    if compute_output_noise_variance:
+        Y_var_noise = _compute_output_noise_variance(Y)
+
+    freqs = np.arange(n_samples // 2 + 1) * fs / n_samples
+    u_avg = np.mean(u, axis=3)
+    y_avg = np.mean(y, axis=3)
+    U_avg = np.mean(U, axis=3)
+    Y_avg = np.mean(Y, axis=3)
+
+    return InputOutputData(
+        TimeData(jnp.asarray(u_avg), jnp.asarray(y_avg), t, ts),
+        FrequencyData(
+            G_bla,
+            jnp.asarray(U_avg),
+            jnp.asarray(Y_avg),
+            Y_var_noise,
+            freqs,
+            excited_bins,
+            fs,
+        ),
+        norm,
+    )
+
+
 def _create_nonparametric_bla(
     u: RealArray,
     y: RealArray,
     fs: float,
     excited_bins: NDArray[np.int_],
-) -> NonparametricBLA | None:
-    try:
+) -> BLAEstimate | None:
+
+    nu, n_realizations = u.shape[1], u.shape[2]
+    if n_realizations < nu:
+        print(
+            "Warning: Insufficient realizations (n_realizations < nu) to compute "
+            "the nonparametric BLA. Identification can proceed in input-output mode, " 
+            "but the initial linear model may be suboptimal."
+        )
+        return None
+    else:
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=NoiseCovarianceUnavailableWarning)
             warnings.filterwarnings("ignore", category=TotalCovarianceUnavailableWarning)
             bla = noisy_input(u, y, fs, excited_bins)
-    except InsufficientExperimentsError:
-        print(
-            "Warning: Insufficient realizations (n_realizations < nu) to compute the "
-            "nonparametric BLA. Identification can proceed in input-output mode, but "
-            "the initial linear model may be suboptimal.",
-        )
-        return None
 
     var_noise = bla.G.noise.var
     var_tot = bla.G.total.var
-    return NonparametricBLA(
+    return BLAEstimate(
         G=jnp.asarray(bla.G.value),
         var_noise=jnp.asarray(var_noise) if var_noise is not None else None,
         var_tot=jnp.asarray(var_tot) if var_tot is not None else None,
     )
+
+
+def _reconstruct_realization_signal(
+    spectrum: ComplexArray,
+    n_samples: int,
+) -> RealArray:
+    """Reconstruct realization-layout time signals from BLA experiment spectra."""
+    signal = np.fft.irfft(spectrum, n=n_samples, axis=0)
+    _, n_channels, nu, n_experiments, n_periods = signal.shape
+    n_realizations = nu * n_experiments
+    return signal.reshape(n_samples, n_channels, n_realizations, n_periods, order="F")
+
+
+def _normalize_bla_estimate(
+    bla: BestLinearApproximationBLA,
+    norm: Normalizer,
+) -> BLAEstimate:
+    """Scale a BLA estimate and its variances to normalized signal coordinates."""
+    scale = norm.u_std[None, None, :] / norm.y_std[None, :, None]
+    variance_scale = scale**2
+    var_noise = bla.G.noise.var
+    var_tot = bla.G.total.var
+    return BLAEstimate(
+        G=jnp.asarray(bla.G.value * scale),
+        var_noise=jnp.asarray(var_noise * variance_scale) if var_noise is not None else None,
+        var_tot=jnp.asarray(var_tot * variance_scale) if var_tot is not None else None,
+    )
+
+
+def _normalize_output_noise_variance(
+    Y_var_noise: RealArray | None,
+    norm: Normalizer,
+) -> Float[Array, "n_bins ny"] | None:
+    """Scale output-spectrum noise variance to normalized output coordinates."""
+    if Y_var_noise is None:
+        return None
+
+    return jnp.asarray(Y_var_noise / norm.y_std[None, :] ** 2)
 
 
 def _compute_output_noise_variance(
