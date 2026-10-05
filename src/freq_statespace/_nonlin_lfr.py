@@ -215,6 +215,7 @@ def optimize(
     *,
     solver: optx.AbstractLeastSquaresSolver | optx.AbstractMinimiser = SOLVER,
     freq_weighting: bool = True,
+    estimate_direct_feedthrough: bool = True,
     max_iter: int = MAX_ITER_OPTIMIZATION,
     print_every: int = PRINT_EVERY,
     return_solve_details: bool = False,
@@ -236,6 +237,9 @@ def optimize(
     freq_weighting : bool
         Whether to use frequency weighting based on the inverse of the output noise 
         variance estimate. Defaults to `True`.
+    estimate_direct_feedthrough : bool
+        Whether to optimize the direct feedthrough matrix `D_yu`. If `False`,
+        `D_yu` is replaced with and fixed to zero. Defaults to `True`.
     max_iter : int
         Maximum number of optimization iterations. Defaults to `100`.
     print_every : int
@@ -275,10 +279,17 @@ def optimize(
         freq_weighting, data.freq.Y_var_noise, logging_enabled
     )
 
+    if not estimate_direct_feedthrough:
+        model = eqx.tree_at(
+            lambda tree: tree.D_yu, model, replace=jnp.zeros_like(model.D_yu)
+        )
+
     if offset is None:  # we start 10% "ahead of time"
         offset = int(np.ceil(0.1 * data.time.u.shape[0]))
 
-    theta0, args = _prepare_nonlin_optimization(data, model, offset, freq_weighting)
+    theta0, args = _prepare_nonlin_optimization(
+        data, model, offset, freq_weighting, estimate_direct_feedthrough
+    )
  
     # Optimize the model parameters
     if logging_enabled:
@@ -542,7 +553,8 @@ def _prepare_nonlin_optimization(
     data: InputOutputData,
     model: ModelNonlinearLFR,
     offset: int,
-    freq_weighting: bool = True
+    freq_weighting: bool = True,
+    estimate_direct_feedthrough: bool = True,
 ) -> tuple[ModelNonlinearLFR, ArgsNonlinearOptimization, ModelNonlinearLFR]:
     """Prepare initial guess and function arguments for nonlinear optimization."""    
     # Separate static and dynamic parameters
@@ -554,6 +566,15 @@ def _prepare_nonlin_optimization(
         theta0,
         replace=(None, None),
     )
+
+    if not estimate_direct_feedthrough:
+        theta0 = eqx.tree_at(lambda tree: tree.D_yu, theta0, replace=None)
+        theta_static = eqx.tree_at(
+            lambda tree: tree.D_yu,
+            theta_static,
+            replace=jnp.zeros_like(model.D_yu),
+            is_leaf=lambda leaf: leaf is None,
+        )
     
     x_bla = _misc.compute_steady_state_bla_state(model._bla, data)
 

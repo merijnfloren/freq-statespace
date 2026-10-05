@@ -45,6 +45,7 @@ def subspace_id(
     nq: int | None = None,
     freq_weighting: bool = True,
     input_output_mode: bool = False,
+    estimate_direct_feedthrough: bool = True,
     logging_enabled: bool = True
 ) -> ModelBLA:
     """Parametrize a state-space model using the frequency-domain subspace method.
@@ -66,6 +67,9 @@ def subspace_id(
         spectra instead of the nonparametric BLA. This mode is automatically activated 
         if no BLA estimate is available, even if `input_output_mode` is set to `False`. 
         Defaults to `False`.
+    estimate_direct_feedthrough : bool
+        Whether to estimate the direct feedthrough matrix `D_yu`. If `False`,
+        `D_yu` is fixed to zero. Defaults to `True`.
     logging_enabled : bool
         Whether to print a summary of the identification results. Defaults to `True`.
 
@@ -96,7 +100,8 @@ def subspace_id(
     
     # Run the subspace identification
     A, B_u, C_y, D_yu = _subspace_id(
-        freq_data, nx, nq, freq_weighting, input_output_mode
+        freq_data, nx, nq, freq_weighting, input_output_mode,
+        estimate_direct_feedthrough
     )
     model = ModelBLA(A, B_u, C_y, D_yu, 1 / freq_data.fs, data.norm)
     
@@ -116,6 +121,7 @@ def optimize(
     stability_margin: float = STABILITY_MARGIN,
     freq_weighting: bool = True,
     input_output_mode: bool = False,
+    estimate_direct_feedthrough: bool = True,
     max_iter: int = MAX_ITER,
     print_every: int = PRINT_EVERY,
     return_solve_details: bool = False,
@@ -148,6 +154,9 @@ def optimize(
         spectra instead of the nonparametric BLA. This mode is automatically activated 
         if no BLA estimate is available, even if `input_output_mode` is set to `False`. 
         Defaults to `False`.
+    estimate_direct_feedthrough : bool
+        Whether to optimize the direct feedthrough matrix `D_yu`. If `False`,
+        `D_yu` is replaced with and fixed to zero. Defaults to `True`.
     max_iter : int
         Maximum number of optimization iterations. Defaults to `1000`.
     print_every : int
@@ -188,17 +197,23 @@ def optimize(
     
     # Ensure Normalizer is static
     model = eqx.tree_at(lambda tree: tree.norm, model, replace=None)
+    if not estimate_direct_feedthrough:
+        model = eqx.tree_at(
+            lambda tree: tree.D_yu, model, replace=jnp.zeros_like(model.D_yu)
+        )
     
     # Run the optimization
     if enforce_stability:
         model, solve_result = _optimize_stable(
             model, data, input_output_mode, freq_weighting, logging_enabled,
-            solver, max_iter, print_every, device, stability_margin
+            solver, max_iter, print_every, device, stability_margin,
+            estimate_direct_feedthrough
         )
     else:
         model, solve_result = _optimize(
             model, data, input_output_mode, freq_weighting,
-            logging_enabled, solver, max_iter, print_every, device
+            logging_enabled, solver, max_iter, print_every, device,
+            estimate_direct_feedthrough
         )
     
     # Add Normalizer back to the model
@@ -223,7 +238,8 @@ def _subspace_id(
     nx: int,
     nq: int,
     freq_weighting: bool,
-    input_output_mode: bool
+    input_output_mode: bool,
+    estimate_direct_feedthrough: bool,
 ) -> tuple[ComplexArray, ComplexArray, ComplexArray, ComplexArray]:
     """Perform actual subspace identification with validated inputs."""
     freqs = freq_data.freqs[freq_data.excited_bins]
@@ -272,7 +288,10 @@ def _subspace_id(
 
     # Perform frequency-domain subspace identification
     fddata = (zj, Y, U)
-    A, B_u, C_y, D_yu = fsid.gfdsid(fddata=fddata, n=nx, q=nq, estTrans=False, w=W)[:4]
+    A, B_u, C_y, D_yu = fsid.gfdsid(
+        fddata=fddata, n=nx, q=nq, estTrans=False,
+        estimd=estimate_direct_feedthrough, w=W
+    )[:4]
     return A, B_u, C_y, D_yu
 
 
@@ -286,11 +305,14 @@ def _optimize(
     max_iter: int,
     print_every: int,
     device: DeviceLike,
+    estimate_direct_feedthrough: bool,
 ) -> tuple[ModelBLA, SolveResult]:
     """Perform actual optimization with validated inputs."""
     freqs = data.freq.freqs[data.freq.excited_bins]
     model = _normalize_states(model, data)
-    theta0, theta_static = eqx.partition(model, eqx.is_inexact_array)
+    theta0, theta_static = _partition_optimization_parameters(
+        model, estimate_direct_feedthrough
+    )
 
     if input_output_mode:
         U_nonpar = jnp.asarray(data.freq.U)[data.freq.excited_bins]
@@ -320,6 +342,23 @@ def _optimize(
     return model, solve_result
 
 
+def _partition_optimization_parameters(model, estimate_direct_feedthrough: bool):
+    """Partition model parameters, optionally fixing direct feedthrough to zero."""
+    theta_dyn, theta_static = eqx.partition(model, eqx.is_inexact_array)
+    if estimate_direct_feedthrough:
+        return theta_dyn, theta_static
+
+    d_yu = jnp.zeros_like(model.D_yu)
+    theta_dyn = eqx.tree_at(lambda tree: tree.D_yu, theta_dyn, replace=None)
+    theta_static = eqx.tree_at(
+        lambda tree: tree.D_yu,
+        theta_static,
+        replace=d_yu,
+        is_leaf=lambda leaf: leaf is None,
+    )
+    return theta_dyn, theta_static
+
+
 def _optimize_stable(
     model: ModelBLA,
     data: InputOutputData,
@@ -331,10 +370,14 @@ def _optimize_stable(
     print_every: int,
     device: DeviceLike,
     stability_margin: float,
+    estimate_direct_feedthrough: bool,
 ) -> tuple[ModelBLA, SolveResult]:
     """Optimize a BLA with a contractive state-transition parameterization."""
-    theta0 = _stable_parameters_from_model(
+    theta = _stable_parameters_from_model(
         model, stability_margin
+    )
+    theta0, theta_static = _partition_optimization_parameters(
+        theta, estimate_direct_feedthrough
     )
 
     if input_output_mode:
@@ -344,6 +387,7 @@ def _optimize_stable(
             jnp.asarray(data.freq.Y)[data.freq.excited_bins],
             data.freq.freqs[data.freq.excited_bins],
             stability_margin,
+            theta_static,
         )
         loss_fn = _loss_stable_output_spectrum
     else:
@@ -355,6 +399,7 @@ def _optimize_stable(
             data.freq.freqs[data.freq.excited_bins],
             W,
             stability_margin,
+            theta_static,
         )
         loss_fn = _loss_stable_frequency_response
 
@@ -365,7 +410,7 @@ def _optimize_stable(
     )
 
     model = _stable_model_from_parameters(
-        solve_result.theta, model.ts, stability_margin, norm=None
+        eqx.combine(solve_result.theta, theta_static), model.ts, stability_margin, norm=None
     )
     model = _normalize_states(model, data)
 
@@ -395,10 +440,11 @@ def _loss_output_spectrum(theta_dyn: ModelBLA, args: tuple) -> tuple:
 
 
 def _loss_stable_frequency_response(
-    theta: _StableBLAParameters, args: tuple
+    theta_dyn: _StableBLAParameters, args: tuple
 ) -> tuple:
     """Compute the complex-FRF residual for stable BLA parameters."""
-    ts, G_nonpar, freqs, W, stability_margin = args
+    ts, G_nonpar, freqs, W, stability_margin, theta_static = args
+    theta = eqx.combine(theta_dyn, theta_static)
     model = _stable_model_from_parameters(theta, ts, stability_margin, norm=None)
     G_par = model._frequency_response(freqs)
     loss = jnp.sqrt(W / G_nonpar.size) * (G_par - G_nonpar)
@@ -406,10 +452,11 @@ def _loss_stable_frequency_response(
 
 
 def _loss_stable_output_spectrum(
-    theta: _StableBLAParameters, args: tuple
+    theta_dyn: _StableBLAParameters, args: tuple
 ) -> tuple:
     """Compute the output-spectrum residual for stable BLA parameters."""
-    ts, U_nonpar, Y_nonpar, freqs, stability_margin = args
+    ts, U_nonpar, Y_nonpar, freqs, stability_margin, theta_static = args
+    theta = eqx.combine(theta_dyn, theta_static)
     model = _stable_model_from_parameters(theta, ts, stability_margin, norm=None)
     Y_par = model._frequency_response(freqs) @ U_nonpar
     loss = jnp.sqrt(1 / Y_nonpar.size) * (Y_par - Y_nonpar)
