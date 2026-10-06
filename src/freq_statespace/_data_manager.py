@@ -10,7 +10,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from best_linear_approximation._exceptions import (
-    InsufficientExperimentsError,
     NoiseCovarianceUnavailableWarning,
     TotalCovarianceUnavailableWarning,
 )
@@ -102,7 +101,8 @@ class FrequencyData:
     Y : Complex[Array, "n_bins ny n_realizations"]
         Normalized output DFT, averaged over periods.
     Y_var_noise : Float[Array, "n_bins ny"], optional
-        Estimated output measurement-noise variance. Is `None` when unavailable.
+        Estimated measurement-noise variance of the period-averaged output DFT.
+        Is `None` when unavailable.
     freqs : RealArray, shape (n_samples // 2 + 1,)
         Complete frequency vector.
     excited_bins : NDArray[np.int_], shape (n_bins,)
@@ -312,6 +312,9 @@ def _create_normalized_data_object(
     y_avg = np.mean(y, axis=3)
     U_avg = np.mean(U, axis=3)
     Y_avg = np.mean(Y, axis=3)
+    n_periods = Y.shape[-1]
+    if Y_var_noise is not None:
+        Y_var_noise = Y_var_noise / n_periods
 
     return InputOutputData(
         TimeData(jnp.asarray(u_avg), jnp.asarray(y_avg), t, ts),
