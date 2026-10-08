@@ -40,7 +40,7 @@ dependencies = [
   "optimistix>=0.0.10",
   "equinox>=0.12.2",
   "scipy>=1.10",
-  "best-linear-approximation[benchmarks]>=0.1.0",
+  "best-linear-approximation[benchmarks]>=0.1.1",
   "numpy>=2.0",
 ]
 
@@ -73,6 +73,7 @@ dev = [
     "ipykernel>=7.4.0",
     "jax[cuda12]>=0.11.1",
     "matplotlib>=3.11.2",
+    "multisine>=0.1.1",
     "nonlinear-benchmarks>=1.0.1",
     "optax>=0.2.8",
     "pyqt5>=5.15.11",

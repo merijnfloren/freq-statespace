@@ -36,14 +36,14 @@ wheels = [
 
 [[package]]
 name = "best-linear-approximation"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/77/33/3fcfbd556b388094077cbc99886ce305d2e48910cfb1a0b9fa72224f0e9f/best_linear_approximation-0.1.0.tar.gz", hash = "sha256:110296a4c524e279049c5168d02b49e707ee564cb331fb851d690aa55b0da597", size = 25898, upload-time = "2026-10-02T08:58:42.335Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2f/bb/26e396829ea41397c4fb629a3a9eeaa794ed29a202a006c540cdc80d25c4/best_linear_approximation-0.1.1.tar.gz", hash = "sha256:078d51d2e5d9260db6ce8891d47842b2c355ed3e1152ac1f3d8aa02036b1d752", size = 25874, upload-time = "2026-10-05T15:38:02.61Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/38/30d69915b85b337f315a02150de6663d0ccb7b700b95e8f25a22af939f79/best_linear_approximation-0.1.0-py3-none-any.whl", hash = "sha256:33a23bc18a99e0ed81acfe9b098272dad5051b4fa0c405773a647bb098188252", size = 37292, upload-time = "2026-10-02T08:58:41.014Z" },
+    { url = "https://files.pythonhosted.org/packages/02/2d/314b83697e03c70837247dff14bfb741bd5ebdf5a0feb6ef3be0cdac46c7/best_linear_approximation-0.1.1-py3-none-any.whl", hash = "sha256:8a60eac2719a989364c7dc83ee8a314124387a6de3d70fe1719129e721b78200", size = 37368, upload-time = "2026-10-05T15:38:01.143Z" },
 ]
 
 [package.optional-dependencies]
@@ -509,6 +509,7 @@ dev = [
     { name = "ipykernel" },
     { name = "jax", extra = ["cuda12"] },
     { name = "matplotlib" },
+    { name = "multisine" },
     { name = "nonlinear-benchmarks" },
     { name = "optax" },
     { name = "pyqt5" },
@@ -516,7 +517,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "best-linear-approximation", extras = ["benchmarks"], specifier = ">=0.1.0" },
+    { name = "best-linear-approximation", extras = ["benchmarks"], specifier = ">=0.1.1" },
     { name = "equinox", specifier = ">=0.12.2" },
     { name = "jax", specifier = ">=0.4.38,!=0.7.0,!=0.7.1" },
     { name = "jaxtyping", specifier = ">=0.2.24" },
@@ -530,6 +531,7 @@ dev = [
     { name = "ipykernel", specifier = ">=7.4.0" },
     { name = "jax", extras = ["cuda12"], specifier = ">=0.11.1" },
     { name = "matplotlib", specifier = ">=3.11.2" },
+    { name = "multisine", specifier = ">=0.1.1" },
     { name = "nonlinear-benchmarks", specifier = ">=1.0.1" },
     { name = "optax", specifier = ">=0.2.8" },
     { name = "pyqt5", specifier = ">=5.15.11" },
@@ -994,6 +996,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/59/8f/3298e3f334832bc28dd144af6b99cdc93502a8687e71922ea68b0a319929/ml_dtypes-0.6.0-cp315-cp315t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e2d6149f3a57f405bcad5fb41e03218b8373936253f23e1ca84c0108abbc3392", size = 430823, upload-time = "2026-08-13T14:14:36.44Z" },
     { url = "https://files.pythonhosted.org/packages/93/d2/f2dbf118f42ce4c325a139c9236737f436b7f8e00cd18701c99ef2405e6f/ml_dtypes-0.6.0-cp315-cp315t-win_amd64.whl", hash = "sha256:ce7563e0b1a4482cbc1b4a6272145e54e4489e54fe7428f94908c3d87103abfa", size = 465119, upload-time = "2026-08-13T14:14:37.776Z" },
     { url = "https://files.pythonhosted.org/packages/5a/ff/bda40387b5c5c64254595f4d81a12351770856acc5de4e6d43606a31f161/ml_dtypes-0.6.0-cp315-cp315t-win_arm64.whl", hash = "sha256:f6cb525101b6b903779188c1e9e9490c343b455ab822883e02cf01e5547338d2", size = 572666, upload-time = "2026-08-13T14:14:38.993Z" },
+]
+
+[[package]]
+name = "multisine"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fd/c9/b897d0f7916cb2a4f66878a3c24be158ca82193c3e26b416d21408673341/multisine-0.1.1.tar.gz", hash = "sha256:dea4e052a26f4ed81a8106b2e7b7bb85faa7677bd0ffa76cebd7d7dd1d0253c5", size = 4832, upload-time = "2026-09-24T09:11:59.186Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/96/319a135298215959fe8cef4101baa37c9e227ef997ca1c3a93add41b8968/multisine-0.1.1-py3-none-any.whl", hash = "sha256:24489ad8c4959bf5995591d746dc15a81eb7f3f4fc7a0daa3e5088c6d3d7b36c", size = 5646, upload-time = "2026-09-24T09:12:00.405Z" },
 ]
 
 [[package]]
@@ -1504,6 +1518,7 @@ wheels = [
 name = "pyqt5-sip"
 version = "12.20.0"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/ab/835df8e6fb06a618a4b8664765c5598e933c8113e90448e294549c9447f7/pyqt5_sip-12.20.0.tar.gz", hash = "sha256:93e0622791f8d22cd4a32a29edfdd2ef6d6680f4c47f59b03ebf1c5da3c3e896", size = 106719, upload-time = "2026-10-04T12:25:58.414Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b1/87/ac53f7e438f6a6db9382eb73ea3037644c07d01a12812b861c71f0adca62/pyqt5_sip-12.20.0-cp312-cp312-macosx_10_9_universal2.whl", hash = "sha256:3e4d749786af6fae7d7f40539a2e7f4cad0711291abd068dc5a33d87bfd7ec3f", size = 124933, upload-time = "2026-10-04T12:25:43.33Z" },
     { url = "https://files.pythonhosted.org/packages/a0/7e/5807a64da9966d485df609acfe4b2596241dc3a11b3d9eea97a7c43b3ee8/pyqt5_sip-12.20.0-cp312-cp312-manylinux_2_5_x86_64.manylinux1_x86_64.whl", hash = "sha256:17af170daf9cfc5d475df60bc1157c70fc8fdfc8068af5af32226ee2fc2642ce", size = 282155, upload-time = "2026-10-04T12:25:45.402Z" },
@@ -1515,6 +1530,8 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/24/16df862e13a9ea7ba173dd4c150dc34d06ce1a76fcc895d2aa754ef85a57/pyqt5_sip-12.20.0-cp313-cp313-win_amd64.whl", hash = "sha256:194ec42291089077c3290ad02c74a4b4922eb0f6608dd0bb133fbca60b985acd", size = 58123, upload-time = "2026-10-04T12:25:51.591Z" },
     { url = "https://files.pythonhosted.org/packages/5a/07/53d02d98a367a5d3b07e7aed182a9fbed62565fa438444f53a6c78495034/pyqt5_sip-12.20.0-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:959b91d032cd1605dc8a242057f6d4520ba7e0a8a95909ac93eaad87476b6b65", size = 125216, upload-time = "2026-10-04T12:25:53.917Z" },
     { url = "https://files.pythonhosted.org/packages/94/7b/5361cd0cf56cb8a2aedbc368797ee8d91a6f4b7e0aa1f03839f5e7e0c8fd/pyqt5_sip-12.20.0-cp314-cp314-manylinux_2_5_x86_64.manylinux1_x86_64.whl", hash = "sha256:32fa6cd31b5b6c049171f11eeb76a7d06bb04e5823983d852ea64c336ce66b6c", size = 282761, upload-time = "2026-10-04T12:25:55.072Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/85/29e5ee4370b442e07f5a55f716ae35390f3cc9f355c16de41bef7bd48452/pyqt5_sip-12.20.0-cp314-cp314-win32.whl", hash = "sha256:7ec983ef59c0d2e06c900c409d346b9c0f00cca4e678397fd709089468bc15c5", size = 50691, upload-time = "2026-10-04T12:25:57.38Z" },
+    { url = "https://files.pythonhosted.org/packages/20/5c/ecf0053e1b45464f2c06c036a16d54bc6e15a7d6d87f54a136e741c6dec4/pyqt5_sip-12.20.0-cp314-cp314-win_amd64.whl", hash = "sha256:c7bf7656d37e1144d0638f46ea623a9584a3921d5921c287ac831c5d77cdd2dd", size = 59615, upload-time = "2026-10-04T12:25:56.268Z" },
 ]
 
 [[package]]

@@ -20,34 +20,90 @@ if TYPE_CHECKING:
     from freq_statespace._typing import RealArray
 
 
+def _as_matrix(value: RealArray | float) -> Float[Array, "n_rows n_columns"]:
+    """Convert a scalar or array-like value to a two-dimensional JAX array."""
+    return jnp.atleast_2d(jnp.asarray(value))
+
+
+def _identity_normalizer(nu: int, ny: int) -> Normalizer:
+    """Create normalization statistics that leave input and output signals unchanged."""
+    return Normalizer(
+        u_mean=np.zeros(nu),
+        u_std=np.ones(nu),
+        y_mean=np.zeros(ny),
+        y_std=np.ones(ny),
+    )
+
+
 @MODEL_REGISTRY.register
 class ModelBLA(eqx.Module, Serializable):
     """BLA model class.
 
     Parameters
     ----------
-    A : Float[Array, "nx nx"]
+    A : Float[Array, "nx nx"] or float
         State transition matrix.
-    B_u : Float[Array, "nx nu"]
+    B_u : Float[Array, "nx nu"] or float
         Input-to-state matrix.
-    C_y : Float[Array, "ny nx"]
+    C_y : Float[Array, "ny nx"] or float
         State-to-output matrix.
-    D_yu : Float[Array, "ny nu"]
+    D_yu : Float[Array, "ny nu"] or float
         Input-to-output matrix.
     ts : float
         Sampling time (in seconds) of the discrete system.
-    norm : Normalizer
-        Contains means and standard deviations of input-output signals.
+    norm : Normalizer, optional
+        Means and standard deviations of input-output signals. If omitted,
+        inputs and outputs are left unnormalized.
 
     """
 
-    A: Float[Array, "nx nx"] = eqx.field(converter=jnp.asarray)
-    B_u: Float[Array, "nx nu"] = eqx.field(converter=jnp.asarray)
-    C_y: Float[Array, "ny nx"] = eqx.field(converter=jnp.asarray)
-    D_yu: Float[Array, "ny nu"] = eqx.field(converter=jnp.asarray)
+    A: Float[Array, "nx nx"] = eqx.field(converter=_as_matrix)
+    B_u: Float[Array, "nx nu"] = eqx.field(converter=_as_matrix)
+    C_y: Float[Array, "ny nx"] = eqx.field(converter=_as_matrix)
+    D_yu: Float[Array, "ny nu"] = eqx.field(converter=_as_matrix)
     ts: float
     norm: Normalizer
     _type_name: ClassVar[str] = "model_bla"
+
+    def __init__(
+        self,
+        A: RealArray | float,
+        B_u: RealArray | float,
+        C_y: RealArray | float,
+        D_yu: RealArray | float,
+        ts: float,
+        norm: Normalizer | None = None,
+    ) -> None:
+        """Initialize a BLA model.
+
+        Scalars are accepted for all system matrices, which initializes a
+        first-order SISO model. Array-like values are converted to matrices.
+
+        Parameters
+        ----------
+        A : RealArray or float
+            State transition matrix.
+        B_u : RealArray or float
+            Input-to-state matrix.
+        C_y : RealArray or float
+            State-to-output matrix.
+        D_yu : RealArray or float
+            Input-to-output matrix.
+        ts : float
+            Sampling time in seconds.
+        norm : Normalizer, optional
+            Input/output normalization statistics. If omitted, zero means and
+            unit standard deviations are created using the model dimensions.
+
+        """
+        self.A = _as_matrix(A)
+        self.B_u = _as_matrix(B_u)
+        self.C_y = _as_matrix(C_y)
+        self.D_yu = _as_matrix(D_yu)
+        self.ts = ts
+        nu = self.B_u.shape[1]
+        ny = self.C_y.shape[0]
+        self.norm = _identity_normalizer(nu, ny) if norm is None else norm
     
     @classmethod
     def _from_config(cls, config: dict[str, Any]) -> Self:
@@ -221,6 +277,29 @@ class ModelBLA(eqx.Module, Serializable):
         B_u = self.B_u.astype(complex)  # to suppress a warning
         C_y = self.C_y.astype(complex)  # to suppress a warning
         return jax.vmap(G)(np.arange(len(freqs)))
+
+    def frequency_response(
+        self, freqs: RealArray
+    ) -> Complex[Array, "n_bins ny nu"]:
+        """Compute the frequency response in the original signal coordinates.
+
+        Parameters
+        ----------
+        freqs : RealArray, shape (n_bins,)
+            Frequency points in Hz.
+
+        Returns
+        -------
+        Complex[Array, "n_bins ny nu"]
+            Frequency response matrix in the original input and output units.
+            The response describes deviations about the input and output means
+            stored in ``norm``.
+
+        """
+        G_normalized = self._frequency_response(freqs)
+        y_std = jnp.asarray(self.norm.y_std)[None, :, None]
+        u_std = jnp.asarray(self.norm.u_std)[None, None, :]
+        return G_normalized * y_std / u_std
     
     def _config_payload(self) -> dict[str, Any]:
         """Convert structural information to a dictionary for serialization."""
@@ -239,10 +318,10 @@ class ModelNonlinearLFR(ModelBLA):
     and static nonlinear feedback.
     """
 
-    B_w: Float[Array, "nx nw"] = eqx.field(converter=jnp.asarray)
-    C_z: Float[Array, "nz nx"] = eqx.field(converter=jnp.asarray)
-    D_yw: Float[Array, "ny nw"] = eqx.field(converter=jnp.asarray)
-    D_zu: Float[Array, "nz nu"] = eqx.field(converter=jnp.asarray)
+    B_w: Float[Array, "nx nw"] = eqx.field(converter=_as_matrix)
+    C_z: Float[Array, "nz nx"] = eqx.field(converter=_as_matrix)
+    D_yw: Float[Array, "ny nw"] = eqx.field(converter=_as_matrix)
+    D_zu: Float[Array, "nz nu"] = eqx.field(converter=_as_matrix)
     func_static: AbstractNonlinearFunction
     
     # Keep a private reference to the original BLA for initial state selection
@@ -257,53 +336,61 @@ class ModelNonlinearLFR(ModelBLA):
     
     def __init__(
         self,
-        A: Float[Array, "nx nx"],
-        B_u: Float[Array, "nx nu"],
-        C_y: Float[Array, "ny nx"],
-        D_yu: Float[Array, "ny nu"],
-        B_w: Float[Array, "nx nw"],
-        C_z: Float[Array, "nz nx"],
-        D_yw: Float[Array, "ny nw"],
-        D_zu: Float[Array, "nz nu"],
+        A: RealArray | float,
+        B_u: RealArray | float,
+        C_y: RealArray | float,
+        D_yu: RealArray | float,
+        B_w: RealArray | float,
+        C_z: RealArray | float,
+        D_yw: RealArray | float,
+        D_zu: RealArray | float,
         func_static: AbstractNonlinearFunction,
         ts: float,
-        norm: Normalizer
+        norm: Normalizer | None = None,
     ) -> None:
         """Initialize NL-LFR model.
 
         Parameters
         ----------
-        A : Float[Array, "nx nx"]
+        A : Float[Array, "nx nx"] or float
             State transition matrix.
-        B_u : Float[Array, "nx nu"]
+        B_u : Float[Array, "nx nu"] or float
             Input-to-state matrix.
-        C_y : Float[Array, "ny nx"]
+        C_y : Float[Array, "ny nx"] or float
             State-to-output matrix.
-        D_yu : Float[Array, "ny nu"]
+        D_yu : Float[Array, "ny nu"] or float
             Input-to-output matrix.
-        B_w : Float[Array, "nx nw"]
+        B_w : Float[Array, "nx nw"] or float
             Feedback input-to-state matrix.
-        C_z : Float[Array, "nz nx"]
+        C_z : Float[Array, "nz nx"] or float
             State-to-static nonlinear function matrix.
-        D_yw : Float[Array, "ny nw"]
+        D_yw : Float[Array, "ny nw"] or float
             Feedback input-to-output matrix.
-        D_zu : Float[Array, "nz nu"]
+        D_zu : Float[Array, "nz nu"] or float
             Input-to-static nonlinear function matrix.
         func_static : AbstractNonlinearFunction
             Static nonlinear function mapping `z` to `w`.
         ts : float
             Sampling time (in seconds) of the discrete system.
         norm : Normalizer, optional
-            Contains means and standard deviations of input-output signals.
+            Input/output normalization statistics. If omitted, zero means and
+            unit standard deviations are created using the model dimensions.
 
         """
         super().__init__(A, B_u, C_y, D_yu, ts, norm)
-        self.B_w = B_w
-        self.C_z = C_z
-        self.D_yw = D_yw
-        self.D_zu = D_zu
+        self.B_w = _as_matrix(B_w)
+        self.C_z = _as_matrix(C_z)
+        self.D_yw = _as_matrix(D_yw)
+        self.D_zu = _as_matrix(D_zu)
         self.func_static = func_static 
-        self._bla = ModelBLA(A, B_u, C_y, D_yu, ts, norm)
+        self._bla = ModelBLA(
+            self.A,
+            self.B_u,
+            self.C_y,
+            self.D_yu,
+            self.ts,
+            self.norm,
+        )
         
     @classmethod
     def _from_config(cls, config: dict[str, Any]) -> Self:
@@ -420,6 +507,40 @@ class ModelNonlinearLFR(ModelBLA):
             + super().num_parameters() + self.func_static.num_parameters
         )
 
+    def _frequency_response(
+        self, freqs: RealArray
+    ) -> Complex[Array, "n_bins ny nu"]:
+        """Compute the direct linear-path frequency response.
+
+        This method does not include the nonlinear feedback and therefore does
+        not represent the frequency response of the complete NL-LFR model.
+        """
+        _print_nllfr_frequency_response_warning()
+        return super()._frequency_response(freqs)
+
+    def frequency_response(
+        self, freqs: RealArray
+    ) -> Complex[Array, "n_bins ny nu"]:
+        """Compute the direct linear-path response in original signal coordinates.
+
+        Parameters
+        ----------
+        freqs : RealArray, shape (n_bins,)
+            Frequency points in Hz.
+
+        Returns
+        -------
+        Complex[Array, "n_bins ny nu"]
+            Frequency response of the direct linear path in the original input
+            and output units. It does not include the nonlinear feedback.
+
+        """
+        _print_nllfr_frequency_response_warning()
+        G_normalized = ModelBLA._frequency_response(self, freqs)
+        y_std = jnp.asarray(self.norm.y_std)[None, :, None]
+        u_std = jnp.asarray(self.norm.u_std)[None, None, :]
+        return G_normalized * y_std / u_std
+
     def _simulate(
         self,
         u: Float[Array, "n_samples nu n_realizations"],
@@ -490,7 +611,17 @@ class ModelNonlinearLFR(ModelBLA):
         config["func_static"] = self.func_static.to_config()
         return config
         
-        
+
+def _print_nllfr_frequency_response_warning() -> None:
+    """Print a warning about the direct linear-path response of an NL-LFR."""
+    print(
+        "Warning: The ModelNonlinearLFR frequency response returns only the "
+        "direct linear path and does not include nonlinear feedback. An NL-LFR "
+        "has no unique frequency response without a specified operating point "
+        "and linearization."
+    )
+
+
 def _simulate_core(
     model: ModelBLA | ModelNonlinearLFR,
     u: RealArray,
