@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from jaxtyping import Array, Complex, Float
     from numpy.typing import NDArray
 
-    from best_linear_approximation import NonparametricBLA as BestLinearApproximationBLA
+    from best_linear_approximation import NonparametricBLA
     from freq_statespace._typing import ComplexArray, RealArray
 
 
@@ -215,7 +215,7 @@ def create_data_object(
 
 
 def create_data_object_from_bla(
-    bla: BestLinearApproximationBLA,
+    bla: NonparametricBLA,
 ) -> InputOutputData:
     """Create an InputOutputData object from a best-linear-approximation result.
 
@@ -373,7 +373,7 @@ def _reconstruct_realization_signal(
 
 
 def _normalize_bla_estimate(
-    bla: BestLinearApproximationBLA,
+    bla: NonparametricBLA,
     norm: Normalizer,
 ) -> BLAEstimate:
     """Scale a BLA estimate and its variances to normalized signal coordinates."""
