@@ -145,3 +145,102 @@ If you use the inference and learning method, please also cite the corresponding
   publisher={IEEE}
 }
 ```
+
+<!-- BEGIN: reusable-result capability description -->
+## For AI-assisted method selection
+
+<!--
+Maintained for the CoMoDO reusable result.
+Template: comodo-reusable-result/templates/capability-section.md
+This section is read by the `find-methods` skill to match this repository
+against an external user's application. Keep it accurate; update it when
+examples are added or removed.
+-->
+
+### Identity
+
+- **One-line summary:** Fit linear or nonlinear, black-box state-space models to excited input-output measurements, primarily periodic multisine experiments, including data collected while the system stays in closed loop.
+- **Role:** method library
+- **Maturity:** validated on lab hardware through recorded experimental data; does not deploy models or control hardware.
+- **Maintainer / lab:** Merijn Floren / KU Leuven MECO
+- **Licence / availability:** GPL-3.0; Python package on PyPI as `freq-statespace`
+
+### Physical setup
+
+<!-- Use-case demonstrators only. Method libraries and middleware: write `n/a`. -->
+
+- **System under control:** n/a — offline identification library; no plant is controlled by this package.
+- **Actuation:** n/a — it consumes recorded input signals and does not command actuators.
+- **Sensing:** n/a — it consumes recorded input-output data and does not acquire measurements.
+- **Sample rates:** user-supplied sampling frequency is required; input and output data contain an equal number of samples per period.
+- **Hardware & fieldbus:** n/a — no hardware or fieldbus interface.
+- **Scale of the dynamics:** n/a — determined by the sampling rate, excitation spectrum, record length, selected state dimension, and nonlinear model structure. JAX can use GPU/TPU acceleration for mid-size to large problems.
+
+### Problems this repository can help with
+
+- Fit a compact linear dynamic model from excited, sampled input-output tests, so it can be simulated, analysed, or used by another control-design workflow (frequency-domain BLA and state-space identification).
+- Fit a nonlinear state-space model when a linear model misses nonlinear input-output behaviour, including static nonlinearities and behaviour that can be represented by increasing the state dimension (NL-LFR identification).
+- Identify a plant or unknown controller from dedicated experiments while it remains in feedback, using a closed-loop BLA as the starting point (closed-loop BLA followed by state-space identification).
+
+### Examples
+
+<!--
+One row per runnable example. Entry point = the file someone opens first.
+Keep this table complete: an example missing here is invisible to the tool.
+-->
+
+| Example | What it demonstrates | Entry point | Sim | Hardware |
+| --- | --- | --- | --- | --- |
+| Silverbox with neural nonlinearity | Linear BLA identification followed by nonlinear NL-LFR fitting with a neural network. | `examples/nonlinear_benchmarks/silverbox_neural_network.py` | No | Recorded experimental data; offline only |
+| Silverbox with inference and learning | BLA, polynomial NL-LFR inference and learning, nonlinear refinement, and test-set evaluation. | `examples/nonlinear_benchmarks/silverbox_inference_and_learning.py` | No | Recorded experimental data; offline only |
+| F-16 ground-vibration test | Linear model fitting with and without stability enforcement. | `examples/nonlinear_benchmarks/f16.ipynb` | No | Recorded experimental data; offline only |
+| Fine Steering Mirror | Linear and nonlinear modelling of measured mirror data, including distortion analysis. | `examples/nonlinear_benchmarks/fine_steering_mirror.ipynb` | No | Recorded experimental data; offline only |
+| Parallel Wiener–Hammerstein system | Linear and nonlinear identification and benchmark reporting from measured data. | `examples/nonlinear_benchmarks/parallel_wiener_hammerstein.ipynb` | No | Recorded experimental data; offline only |
+| Dual-motor drivetrain, closed loop | Controller and plant identification from closed-loop records, then validation by closed-loop simulation. | `examples/dual_motor_drivetrain/closed_loop_identification.ipynb` | No | Recorded experimental data; offline identification and simulation only |
+
+### Preconditions
+
+<!--
+What must be true of the user's application before any of this transfers.
+Be concrete: data you must be able to collect, signals you must be able to
+inject, things you must be able to measure, compute you must have.
+-->
+
+- Supply sampled input and output recordings with a known sampling frequency. The signals must be persistently exciting and are expected to come from multisine excitation covering the dynamics of interest.
+- The preferred workflow uses an integer number of steady-state periods; remove start-up transients before identification. Imperfect periodicity caused by disturbances, measurement noise, residual transients, or closed-loop effects does not by itself rule out use.
+- To estimate a robust nonparametric BLA with uncertainty for a multi-input system, collect at least as many independent realizations as there are input channels. If this is unavailable, identification can still proceed from the input-output spectra rather than a BLA, but this is not preferred.
+- For closed-loop controller identification, record a measured reference or other valid instrumental-variable signal to estimate the BLA with `best-linear-approximation`; use that BLA to initialize the linear fit. Nonlinear residual modelling subsequently uses the input-output recordings.
+- Provide enough CPU memory and, where useful, a JAX-compatible GPU/TPU environment for optimisation; first-order optimizers are available for memory-efficient large-scale fitting.
+
+### Not suitable when
+
+<!--
+The honesty valve. Concrete situations where a user should look elsewhere,
+and, where you know one, the name of what they should look at instead.
+-->
+
+- The only available data are completely non-periodic, such as a measured step response. Use a time-domain identification method designed for transient or step-response data instead.
+- The result must have states or parameters with immediate physical meaning. This package fits black-box, data-driven input-output models; its states and parameters are not directly physical quantities.
+- The available experiment does not excite the dynamics to be identified, or start-up transients cannot be removed sufficiently to obtain an identification record. Run a dedicated excitation experiment instead.
+
+### Dependencies beyond this repository
+
+| Dependency | Why it is needed | Hard requirement? |
+| --- | --- | --- |
+| Python 3.12 or later | Runtime environment. | Yes |
+| JAX | Automatic differentiation, JIT compilation, and CPU/GPU/TPU execution. | Yes |
+| NumPy, SciPy, Equinox, and Optimistix | Array handling, numerical routines, model representation, and default optimisation. | Yes |
+| `best-linear-approximation` | Nonparametric BLA estimation and its uncertainty information; also provides the closed-loop BLA handoff. | Yes |
+| JAX GPU/TPU installation | Accelerates mid-size and large identification problems. | No — CPU JAX works |
+
+### Where to look deeper
+
+<!-- Files and directories worth reading, with one line each on what is in them. -->
+
+- `README.md` — installation, the three-stage linear/nonlinear workflow, and the Silverbox quick example.
+- `src/freq_statespace/_data_manager.py` — accepted signal layout, periodic-data metadata, BLA creation, and data validation.
+- `src/freq_statespace/_best_linear_approximation.py` and `src/freq_statespace/_nonlin_lfr.py` — linear and nonlinear identification entry points.
+- `examples/nonlinear_benchmarks/` — measured-system examples for linear and nonlinear identification.
+- `examples/dual_motor_drivetrain/closed_loop_identification.ipynb` — closed-loop controller and plant workflow.
+
+<!-- END: reusable-result capability description -->
