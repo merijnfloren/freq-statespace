@@ -492,7 +492,7 @@ wheels = [
 
 [[package]]
 name = "freq-statespace"
-version = "0.1.2"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "best-linear-approximation", extra = ["benchmarks"] },
