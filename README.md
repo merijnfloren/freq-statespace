@@ -81,7 +81,7 @@ nllfr = fss.nonlin.inference_and_learning(bla, data, phi, nw)  # NRMSE 1.11%, 45
 nllfr = fss.nonlin.optimize(nllfr, data)  # NRMSE 0.44%, 100 iters, 387ms/iter
 ```
 
-> **Note:** Inference and learning requires substantially less computation time per iteration, as these operations are largely parallelizable. Iteration timings were measured on an NVIDIA T600 Laptop GPU.
+> **Note:** Inference and learning requires substantially less computation time per iteration (measured on an NVIDIA T600 Laptop GPU), as these operations are largely parallelizable.
 
 Alternatively, we could skip inference and learning and jump straight to nonlinear optimization. In this example we use a neural network:
 
