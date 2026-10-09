@@ -196,7 +196,7 @@ Keep this table complete: an example missing here is invisible to the tool.
 | F-16 ground-vibration test | Linear model fitting with and without stability enforcement. | `examples/nonlinear_benchmarks/f16.ipynb` | No | Recorded experimental data; offline only |
 | Fine Steering Mirror | Linear and nonlinear modelling of measured mirror data, including distortion analysis. | `examples/nonlinear_benchmarks/fine_steering_mirror.ipynb` | No | Recorded experimental data; offline only |
 | Parallel Wiener–Hammerstein system | Linear and nonlinear identification and benchmark reporting from measured data. | `examples/nonlinear_benchmarks/parallel_wiener_hammerstein.ipynb` | No | Recorded experimental data; offline only |
-| Dual-motor drivetrain, closed loop | Controller and plant identification from closed-loop records, then validation by closed-loop simulation. | `examples/dual_motor_drivetrain/closed_loop_identification.ipynb` | No | Recorded experimental data; offline identification and simulation only |
+| Dual-motor drivetrain, closed loop | Multisine excitation-signal generation, controller and plant identification from closed-loop records, then validation by closed-loop simulation. | `examples/dual_motor_drivetrain/closed_loop_identification.ipynb` | No | Recorded experimental data; offline identification and simulation only |
 
 ### Preconditions
 
